@@ -1,0 +1,638 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Website {
+  id                  String             @id @default(cuid())
+  url                 String
+  name                String?
+  platform            String?
+  isActive            Boolean            @default(true)
+  consecutiveFailures Int                @default(0)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  userId              String
+  user                User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  monitoringChecks    MonitoringCheck[]
+  incidents           Incident[]
+  alerts              Alert[]
+  performanceChecks   PerformanceCheck[]
+  seoChecks           SeoCheck[]
+
+  @@map("websites")
+}
+
+model MonitoringCheck {
+  id             String   @id @default(cuid())
+  websiteId      String
+  website        Website  @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  success        Boolean
+  statusCode     Int?
+  responseTimeMs Int
+  checkedAt      DateTime @default(now())
+
+  @@map("monitoring_checks")
+}
+
+enum IncidentStatus {
+  OPEN
+  RESOLVED
+}
+
+model Incident {
+  id         String         @id @default(cuid())
+  websiteId  String
+  website    Website        @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  status     IncidentStatus
+  startedAt  DateTime
+  resolvedAt DateTime?
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  alerts     Alert[]
+
+  // General-purpose index for querying all incidents for a website
+  // (e.g. Stage 11.5's future incident history listing).
+  @@index([websiteId])
+  @@map("incidents")
+}
+
+// Stage 15.1: extended for the unified cross-monitoring Alert model. Existing
+// uptime values are preserved byte-identically; new SEO/Performance values
+// are additive — no existing Alert row's type is ever rewritten.
+enum AlertType {
+  INCIDENT_OPENED
+  INCIDENT_RESOLVED
+  SEO_ISSUE_OPENED
+  SEO_ISSUE_RESOLVED
+  PERFORMANCE_DEGRADED
+  PERFORMANCE_RECOVERED
+}
+
+// Stage 15.1: which monitoring domain produced this Alert. Persisted at
+// creation, never inferred dynamically on read — incidentId/seoCheckId/
+// performanceCheckId being populated is a consequence of source, not a
+// substitute for storing it explicitly.
+enum AlertSource {
+  UPTIME
+  SEO
+  PERFORMANCE
+}
+
+// Stage 15.1: reuses the exact INFO/WARNING/ERROR vocabulary already
+// established by SeoIssueSeverity (seo/types.ts) rather than inventing a
+// parallel one. Persisted at creation time, not derived on read — an Alert
+// is a frozen historical fact, and the deterministic engines that would
+// otherwise "derive" a severity (issues.ts, ratings.ts) may themselves
+// change thresholds in a future stage without rewriting history's meaning.
+enum AlertSeverity {
+  INFO
+  WARNING
+  ERROR
+}
+
+// Immutable by design: an Alert records that Sentinel AI detected a
+// meaningful, confirmed event in one monitoring domain (uptime/SEO/
+// performance). It is never updated after creation — delivery/read state
+// (once a Notification concept exists) belongs there, not here. Resolution/
+// recovery is always represented by a second, separate Alert row (e.g.
+// INCIDENT_OPENED + INCIDENT_RESOLVED), never a mutation of the first.
+model Alert {
+  id     String      @id @default(cuid())
+  source AlertSource
+  type   AlertType
+
+  // Persisted at creation (see AlertSeverity doc above) — never derived on
+  // read.
+  severity AlertSeverity
+
+  websiteId String
+  website   Website @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+
+  // Uptime-specific — required for source=UPTIME, null otherwise. Nullable
+  // (Stage 15.1 change from the original required FK) so SEO/Performance
+  // alerts can exist without a synthetic Incident. onDelete stays Cascade,
+  // unchanged from its original behavior — no code path in this codebase
+  // ever deletes an Incident, so this is a purely theoretical edge today;
+  // changing it now would be an unrequested behavior change outside this
+  // stage's scope (see Stage 15.1 report §13 for the full reasoning).
+  incidentId String?
+  incident   Incident? @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  // SEO-specific traceability (Stage 15.1 schema only — no SEO alerts are
+  // created yet). SetNull, not Cascade: an Alert is durable historical
+  // evidence and must outlive the specific SeoCheck snapshot that produced
+  // it if that check row is ever deleted — losing the traceability pointer
+  // is acceptable, losing the Alert itself is not.
+  seoCheckId String?
+  seoCheck   SeoCheck? @relation(fields: [seoCheckId], references: [id], onDelete: SetNull)
+
+  // Performance-specific traceability (Stage 15.1 schema only — no
+  // Performance alerts are created yet). Same SetNull durability reasoning
+  // as seoCheckId above.
+  performanceCheckId String?
+  performanceCheck   PerformanceCheck? @relation(fields: [performanceCheckId], references: [id], onDelete: SetNull)
+
+  // Future stable per-domain identity (e.g. an SEO issue.code, or a
+  // performance rating-transition code) — not populated for existing/future
+  // uptime alerts, which have no equivalent concept.
+  code String?
+
+  // Future frozen, curated human-readable summary — never raw network
+  // errors, stack traces, credentials, resolved IPs, or API keys. Null for
+  // all Stage 15.1 rows; no historical text is manufactured retroactively.
+  message String?
+
+  createdAt DateTime @default(now())
+
+  notifications Notification[]
+  emailDeliveries EmailDelivery[]
+
+  // Unchanged from the original schema — still the DB-level duplicate-
+  // prevention backstop for uptime alerts. Nullable columns in a Postgres
+  // unique index are never considered equal to one another, so this
+  // constraint has no effect on SEO/Performance rows (incidentId always
+  // null for those).
+  @@unique([incidentId, type])
+  // Stage 15.1: future retry/idempotency backstops for SEO/Performance
+  // alert generation (not yet used — no such alerts exist yet). Same
+  // nullable-uniqueness reasoning: rows with seoCheckId/performanceCheckId
+  // null (i.e. every uptime alert) are never considered duplicates of one
+  // another under these constraints.
+  @@unique([seoCheckId, code, type])
+  @@unique([performanceCheckId, code, type])
+  @@index([websiteId])
+  @@index([websiteId, source, createdAt])
+  @@map("alerts")
+}
+
+// Stage 15.6: only IN_APP exists in V1. Deliberately not pre-populated with
+// EMAIL/SLACK/WEBHOOK values that have no corresponding delivery code yet —
+// unlike AlertType's Stage 15.1 widening (which added values for engines
+// that were being built in the SAME phase), adding unused enum values here
+// would be speculative. Extending this enum later is a normal additive
+// migration, not a breaking one.
+enum NotificationChannel {
+  IN_APP
+}
+
+// A per-recipient, mutable representation of a durable Alert. Alert itself
+// stays immutable and delivery/read-state-free (Stage 15.1's invariant,
+// unchanged) — read state, channel, and recipient all live here instead.
+// Notification.userId is fixed at creation time from the Website's owner at
+// that moment; it is never re-derived from the website's CURRENT owner on
+// read (Stage 15.6 §15) — a future ownership-transfer feature is explicitly
+// out of scope and would need its own migration/decision.
+model Notification {
+  id String @id @default(cuid())
+
+  alertId String
+  // Cascade: a Notification without its source Alert cannot render
+  // meaningful content, so it has no reason to outlive it. In practice
+  // Alert rows are never deleted anywhere in this codebase (confirmed by
+  // inspection), so this is a theoretical-only edge today, exactly like
+  // Alert.incidentId's own Cascade — not a currently-exercised code path.
+  alert   Alert  @relation(fields: [alertId], references: [id], onDelete: Cascade)
+
+  userId String
+  // Cascade: notifications should not survive deletion of their recipient
+  // account.
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // No @default — every insert site explicitly sets IN_APP, matching this
+  // codebase's established preference (see SeoCheck's own schema comment)
+  // that a DB-level default on an always-app-provided value only risks
+  // masking a bug where the app forgot to pass one.
+  channel NotificationChannel
+
+  // null = unread. Never backdated/fabricated — set only by an explicit
+  // mark-as-read action (or left null for historical backfill rows, which
+  // are genuinely unread from this feature's point of view since no user
+  // has seen an inbox before Stage 15.6).
+  readAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  // At most one IN_APP notification per (alert, recipient) — the DB-level
+  // idempotency backstop for retried/duplicate Notification-creation
+  // attempts, mirroring Alert's own (seoCheckId, code, type) pattern.
+  @@unique([alertId, userId, channel])
+  // Primary access pattern: "this user's notifications, newest first"
+  // (status=ALL).
+  @@index([userId, createdAt])
+  // Serves both the READ/UNREAD status-filtered list queries and the
+  // unread count efficiently in one index, without maintaining a third,
+  // partial-index-only structure Prisma can't express declaratively —
+  // current volume (a few dozen Alerts total) does not justify that extra
+  // complexity; revisit only if inbox volume genuinely grows.
+  @@index([userId, readAt, createdAt])
+  @@map("notifications")
+}
+
+enum PerformanceStrategy {
+  MOBILE
+  DESKTOP
+}
+
+// Independent of MonitoringCheck by design (Stage 13.0): uptime/reachability
+// and performance are separate concerns with different cadences and
+// measurement technology. Lab fields come from a synthetic Lighthouse run
+// (always present if the PSI call succeeds); field fields come from the
+// real-user CrUX dataset (frequently absent for lower-traffic sites) — all
+// nine metric columns are nullable for exactly these two different reasons.
+model PerformanceCheck {
+  id        String  @id @default(cuid())
+  websiteId String
+  website   Website @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+
+  // Stage P1: the exact normalized page URL this specific check measured —
+  // NOT assumed to equal Website.url. Every latest/history/stats/alert-
+  // predecessor lookup is scoped by (websiteId, pageUrl, strategy) together,
+  // never by (websiteId, strategy) alone, so a manually-tested subpage can
+  // never be compared against — or silently merged with — the homepage's
+  // own history. Required (not nullable): every check, automatic or
+  // manual, always knows exactly which page it measured.
+  pageUrl String
+
+  strategy         PerformanceStrategy
+  performanceScore Int?
+  labLcpMs         Int?
+  labCls           Float?
+  labFcpMs         Int?
+  labTbtMs         Int?
+  fieldLcpMs       Int?
+  fieldCls         Float?
+  fieldInpMs       Int?
+  fieldTtfbMs      Int?
+  checkedAt        DateTime            @default(now())
+  alerts           Alert[]
+  // Stage 16.1: zero-to-many AI analyses of this specific check (never
+  // zero-to-one -- regeneration with a different/upgraded model is an
+  // explicit, intentional capability, not an error case).
+  aiAnalyses       AiAnalysis[]
+
+  // Replaces the original [websiteId, checkedAt] index -- every real query
+  // in this module now filters by websiteId+pageUrl+strategy together
+  // before sorting by checkedAt, and a composite index already serves any
+  // query that only uses a left-prefix subset of these columns (e.g. the
+  // scheduler's websiteId-only bulk lookup), so keeping the narrower index
+  // alongside this one would be redundant.
+  @@index([websiteId, pageUrl, strategy, checkedAt])
+  @@map("performance_checks")
+}
+
+// V1 inspects only the website's root/home page — requestedUrl/finalUrl are
+// still stored per-check (not assumed to always equal website.url) so a
+// future multi-page crawler can represent additional URLs per website
+// without any schema change, matching PerformanceCheck's own
+// check-per-row precedent (Stage 13.x). A failed fetch (SSRF-blocked,
+// network error, timeout — see utils/safeFetch.ts) creates ZERO rows here,
+// exactly like a failed PSI call creates zero PerformanceCheck rows; every
+// persisted row represents a fetch safeFetch actually completed, even for
+// a non-2xx status (404/410/500 are themselves meaningful SEO observations,
+// not failures) — so requestedUrl/finalUrl/statusCode are always known and
+// therefore required, not nullable.
+//
+// All count/boolean fields are required with no @default: a future parser
+// always computes and provides a real value at insert time (0 = a
+// successfully observed zero, matching MonitoringCheck.responseTimeMs's own
+// "always provided by the checking code" convention) — a DB-level default
+// would only mask a bug where the app forgot to pass one. Text/URL fields
+// that represent an optional page feature (title, canonical, robots meta,
+// etc.) are nullable — null means "not present on this page", not "unknown".
+//
+// Every value here is a raw observed fact. Derived interpretations —
+// titleLength, isIndexable, thin-content flags, issue severity, any numeric
+// SEO score — are deliberately NOT persisted; they're computed on read from
+// these facts in a later stage, mirroring how performance/ratings.ts derives
+// GOOD/NEEDS_IMPROVEMENT/POOR from PerformanceCheck's raw metrics rather
+// than storing the rating itself.
+model SeoCheck {
+  id        String  @id @default(cuid())
+  websiteId String
+  website   Website @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+
+  requestedUrl String
+  finalUrl     String
+  statusCode   Int
+
+  // Stage P2: the stable, normalized page identity this check belongs to —
+  // the resolved/validated REQUESTED page URL (via utils/pageUrl.ts's
+  // resolvePageUrl), never finalUrl or canonicalUrl. Defaults to the
+  // website's own canonicalized homepage when no specific page was
+  // selected. This is what every read/history/change-tracking/scheduler
+  // query filters by, exactly like PerformanceCheck.pageUrl (Stage P1) —
+  // requestedUrl/finalUrl above remain raw, unnormalized, informational
+  // fields and are never used for identity/filtering.
+  pageUrl String
+
+  title           String?
+  metaDescription String?
+
+  h1Count Int
+  h1Text  String?
+  h2Count Int
+  h3Count Int
+
+  canonicalUrl String?
+
+  robotsMeta String?
+  xRobotsTag String?
+
+  internalLinkCount Int
+  externalLinkCount Int
+
+  imageCount            Int
+  imagesMissingAltCount Int
+
+  wordCount Int
+
+  // Nullable by design (Stage 14.3A corrective fix): real discovery has
+  // three outcomes, not two. true = confirmed FOUND, false = confirmed
+  // NOT_FOUND (e.g. a clean 404/410), null = UNKNOWN — the probe could not
+  // reliably determine either way (DNS failure, timeout, blocked
+  // destination, too many redirects, network error, or any other
+  // inconclusive HTTP status). UNKNOWN must never be persisted as false.
+  robotsTxtFound Boolean?
+  robotsTxtUrl   String?
+
+  sitemapFound Boolean?
+  sitemapUrl   String?
+
+  // Future parser contract (Stage 14.3, not implemented yet):
+  //   { jsonLdCount: number, types: string[], invalidCount: number }
+  // Always populated by a successful check, even when zero JSON-LD blocks
+  // exist (jsonLdCount: 0) — never null for a persisted row, consistent
+  // with the "0 = observed, null = not present" discipline used above.
+  structuredData Json
+
+  checkedAt DateTime @default(now())
+  alerts    Alert[]
+
+  @@index([websiteId, pageUrl, checkedAt])
+  @@map("seo_checks")
+}
+
+// Stage 16.1: V1 is deliberately Performance-only — performanceCheckId is
+// required (not nullable), and there is no `source`/seoCheckId/incidentId
+// speculative widening the way Alert's schema anticipated SEO/Performance
+// ahead of time. Unlike Alert (a durable, standalone historical EVENT that
+// must outlive the check that produced it — see SeoCheck/PerformanceCheck's
+// own SetNull reasoning), an AiAnalysis's entire value is an INTERPRETATION
+// of one specific check's measured data; without that check it cannot be
+// re-verified or re-contextualized, so onDelete is Cascade, not SetNull.
+// Ownership is deliberately NOT duplicated here (no userId/websiteId) --
+// it is always derivable via performanceCheck -> website -> user, and
+// inspection of this codebase's other models found no genuine need to
+// denormalize it onto this table (contrast Notification.userId, which
+// exists only because Notification is a per-recipient inbox concept this
+// model has no equivalent of).
+// Stage 16.6: PENDING added for the automatic claim-before-provider-call
+// flow only (ai-analysis/repository.ts's claimAutomaticAnalysis) -- a row is
+// inserted as PENDING BEFORE the provider is ever called, then updated to
+// exactly one of the other three statuses once the provider call settles.
+// MANUAL rows (ai-analysis/repository.ts's create) never use PENDING -- the
+// manual path still only ever inserts once, after the provider call already
+// resolved, exactly as in Stage 16.3. A row left PENDING forever (the
+// process crashes/restarts between claim and finalize) is an accepted V1
+// limitation, not silently retried -- see trigger's own comment below.
+enum AiAnalysisStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  INVALID_RESPONSE
+}
+
+// Stage 16.6: distinguishes a user-initiated regeneration (unlimited,
+// Stage 16.3/16.4) from the scheduler's own transition-triggered enrichment
+// (at most once per PerformanceCheck, ever -- Stage 16.5/16.6). Needed
+// because the two flows require fundamentally different duplicate-call
+// semantics on the exact same table; before this stage that distinction
+// could not be expressed in the schema at all.
+enum AiAnalysisTrigger {
+  MANUAL
+  AUTOMATIC
+}
+
+model AiAnalysis {
+  id String @id @default(cuid())
+
+  performanceCheckId String
+  performanceCheck   PerformanceCheck @relation(fields: [performanceCheckId], references: [id], onDelete: Cascade)
+
+  // Chosen before the provider call is attempted, so both a SUCCEEDED and a
+  // FAILED/INVALID_RESPONSE row always know what was tried. No default --
+  // every insert site explicitly sets these, matching this codebase's
+  // established "a DB-level default on an always-app-provided value only
+  // risks masking a bug" discipline (see SeoCheck/Notification).
+  provider String
+  model    String
+
+  // Deterministic hash of the normalized PerformanceAiInput that produced
+  // this row (ai-analysis/fingerprint.ts) -- NOT a uniqueness constraint
+  // (see the field-level doc below and the Stage 16.1 report for why).
+  inputFingerprint String
+
+  // The validated, schema-conformant PerformanceAiOutput -- populated ONLY
+  // when status = SUCCEEDED. Null for PENDING/FAILED/INVALID_RESPONSE: this
+  // stage's own output contract explicitly excludes storing arbitrary/
+  // malformed provider responses (see ai-analysis/validation.ts), so there
+  // is nothing safe to persist here until validation has actually passed.
+  output Json?
+
+  // The database must never treat malformed/unvalidated provider output as
+  // a successful analysis -- status is the single source of truth for that
+  // distinction; `output` being non-null is a consequence of status =
+  // SUCCEEDED, never checked instead of it.
+  status AiAnalysisStatus
+
+  // Stage 16.6: MANUAL for every row created by the HTTP regeneration
+  // endpoint, AUTOMATIC for every row created by the scheduler's
+  // claimAutomaticAnalysis. Never inferred from status/provider -- always
+  // set explicitly at the one respective insert site.
+  trigger AiAnalysisTrigger
+
+  createdAt DateTime @default(now())
+
+  // Deliberately NOT unique overall. A unique(performanceCheckId) would
+  // permanently block legitimate MANUAL regeneration (re-analyzing the same
+  // check with an upgraded model/prompt) -- see Stage 16.3's report for why
+  // that must stay unlimited. The uniqueness this stage actually needs is
+  // narrower: an AUTOMATIC attempt must happen AT MOST ONCE per
+  // performanceCheckId, ever (no retry even after FAILED/INVALID_RESPONSE),
+  // while MANUAL rows for the very same check must remain unrestricted.
+  // Expressing "unique only when trigger = AUTOMATIC" requires a partial
+  // index, which Prisma's schema DSL cannot declare -- so, mirroring this
+  // codebase's existing `incidents_website_open_unique` precedent (see
+  // migration 20260910093919_add_incident_model), this stage's own
+  // migration hand-adds:
+  //   CREATE UNIQUE INDEX "ai_analyses_automatic_unique"
+  //     ON "ai_analyses"("performanceCheckId") WHERE "trigger" = 'AUTOMATIC';
+  // directly in raw SQL, with no corresponding declarative line here. This
+  // is the actual concurrency-safety mechanism (Stage 16.6's "DB decides the
+  // winner, not a JS variable") -- claimAutomaticAnalysis relies on this
+  // constraint rejecting every automatic attempt after the first with a
+  // Postgres unique-violation (P2002), not on any in-memory check.
+  @@index([performanceCheckId, inputFingerprint])
+  @@index([performanceCheckId, createdAt])
+  @@map("ai_analyses")
+}
+
+model User {
+  id            String         @id @default(cuid())
+  name          String
+  email         String         @unique
+  passwordHash  String
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  websites      Website[]
+  notifications Notification[]
+  emailDeliveries EmailDelivery[]
+
+  // Stage 16.8: the one authoritative source of truth for notification
+  // delivery preferences -- fields directly on User, not a dedicated
+  // UserNotificationPreference model, since this is a per-user singleton
+  // (exactly one value per user, never a list), and a separate table would
+  // only add a join + "does a row exist yet for this user" problem for no
+  // present benefit. Not stored on Notification (a delivery/read record,
+  // never a preference) and not duplicated anywhere else.
+  //
+  // inAppNotificationsEnabled: whether a future Alert creates an IN_APP
+  // Notification row for this user going forward (enforced in
+  // notification/repository.ts's createForAlert -- the one shared
+  // Alert->Notification primitive every monitoring domain already calls
+  // through, so no Uptime/SEO/Performance code needed to change). Default
+  // true preserves every existing user's current behavior unchanged.
+  //
+  // emailNotificationsEnabled: a persisted preference only -- Stage 17 will
+  // be the first code that ever reads it to decide whether to send an
+  // email. Nothing in this stage sends email. Default false: do not
+  // silently opt any existing user into a not-yet-built external channel.
+  inAppNotificationsEnabled  Boolean @default(true)
+  emailNotificationsEnabled  Boolean @default(false)
+
+  // Stage 16.9: the authoritative persisted appearance preference. A typed
+  // enum, not an arbitrary string/JSON blob, matching this codebase's
+  // existing discipline (AiAnalysisStatus, AiAnalysisTrigger). SYSTEM is
+  // the safe default for every existing user -- it preserves each user's
+  // current (untouched) OS-driven appearance rather than silently forcing
+  // everyone into LIGHT or DARK.
+  themePreference ThemePreference @default(SYSTEM)
+
+  @@map("users")
+}
+
+// Stage 16.9: three user-facing choices only -- no custom colors/accent
+// picker/font picker (explicitly out of scope). SYSTEM means "follow the
+// OS/browser preference", resolved client-side; LIGHT/DARK override it.
+enum ThemePreference {
+  SYSTEM
+  LIGHT
+  DARK
+}
+
+// Stage 17.2: explicit four-state lifecycle, deliberately including SENDING
+// as its own distinct state rather than overloading PENDING to mean both
+// "waiting to be claimed" and "currently being sent" -- the Stage 17.0
+// proposal's ambiguity, corrected here per Stage 17.2 §3. Two concurrent
+// workers observing the same row can never both believe they own it: the
+// atomic PENDING->SENDING claim (email-delivery/repository.ts's
+// claimDelivery) is the only way to leave PENDING, and it is a single
+// conditional UPDATE, not a read-then-write.
+//
+// No DELIVERED/BOUNCED/RETRYING/CANCELLED -- those describe concepts this
+// codebase has no code for yet (async provider webhooks, retry policy)
+// and would be speculative additions (Stage 17.2 §4).
+enum EmailDeliveryStatus {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+}
+
+// A durable, per-(Alert, recipient) email delivery INTENT -- a sibling of
+// Notification, never a replacement for it, and never related to it
+// directly (Stage 17.2 §7): Alert has two independent delivery children,
+// IN_APP (Notification) and EMAIL (this model). Disabling/removing email
+// delivery must never affect Notification, and vice versa.
+//
+// Deliberately contains none of: recipient email address (always resolved
+// live via userId -> User.email, never snapshotted -- Stage 17.2 §26, no
+// compelling reason for immutable snapshotting surfaced during
+// inspection), subject/html/text body content (Stage 17.4's own concern,
+// not persisted here), or any raw provider response/error object (see
+// lastErrorCode's own comment below).
+model EmailDelivery {
+  id String @id @default(cuid())
+
+  alertId String
+  // Cascade: an EmailDelivery for a deleted Alert has nothing left to
+  // describe -- mirrors Notification.alertId's own identical Cascade
+  // reasoning exactly.
+  alert   Alert  @relation(fields: [alertId], references: [id], onDelete: Cascade)
+
+  userId String
+  // Cascade: delivery intent should not survive deletion of its recipient
+  // account -- mirrors Notification.userId's own identical Cascade
+  // reasoning exactly.
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // No @default -- every insert site explicitly sets PENDING, matching
+  // this codebase's established "a DB-level default on an always-app-
+  // provided value only risks masking a bug" discipline (see
+  // AiAnalysis.status/Notification.channel).
+  status EmailDeliveryStatus
+
+  // String, not an enum tied to {mock, resend} -- provider identity is an
+  // integration/configuration concern (Stage 17.1's own createAiProvider/
+  // getEmailProvider pattern) that may gain/lose named providers without
+  // ever requiring a schema migration. Mirrors AiAnalysis.provider's own
+  // identical String choice and reasoning exactly.
+  provider String
+
+  // Populated ONLY on a successful provider response (status=SENT) --
+  // null for PENDING/SENDING/FAILED. Never a raw provider response object,
+  // only the opaque id Stage 17.1's EmailSendResult already narrows
+  // provider responses down to.
+  providerMessageId String?
+
+  // A sanitized EmailProviderError.code value only (Stage 17.1's own small
+  // taxonomy) -- never a raw Error object, stack trace, raw provider
+  // response, API key, request header, or email body. Populated only on
+  // status=FAILED.
+  lastErrorCode String?
+
+  // Lifecycle timestamps -- exactly one of claimedAt/sentAt/failedAt is
+  // ever set per real transition, never backdated/fabricated:
+  //   PENDING: claimedAt=null, sentAt=null, failedAt=null
+  //   SENDING: claimedAt!=null, sentAt=null, failedAt=null
+  //   SENT:    claimedAt!=null, sentAt!=null, failedAt=null
+  //   FAILED:  claimedAt!=null, sentAt=null, failedAt!=null
+  createdAt DateTime  @default(now())
+  claimedAt DateTime?
+  sentAt    DateTime?
+  failedAt  DateTime?
+
+  // The primary dedup backstop (Stage 17.2 §8): at most one delivery
+  // INTENT per (Alert, recipient), ever -- deliberately excludes
+  // `provider` from this identity, since switching providers must never
+  // allow a second email for the same Alert/user. This is also what makes
+  // createIntent's "attempt create, treat P2002 as already-exists" pattern
+  // correct without a prior findFirst (Stage 17.2 §16).
+  @@unique([alertId, userId])
+  // Serves the future Stage 17.5 worker's "find PENDING rows, oldest
+  // first" polling query (email-delivery/repository.ts's findPending) --
+  // mirrors every other domain's own bounded "fixed latest/oldest N"
+  // history-query index philosophy.
+  @@index([status, createdAt])
+  @@map("email_deliveries")
+}
