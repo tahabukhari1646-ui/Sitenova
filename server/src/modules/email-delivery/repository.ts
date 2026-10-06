@@ -148,4 +148,30 @@ export const emailDeliveryRepository = {
       take: Math.min(limit, MAX_PENDING_BATCH),
     });
   },
+
+  // Stage 17.6: read-only, Settings-facing -- the authenticated user's
+  // single most recent delivery, for the compact status line in Settings ->
+  // Notifications. `userId` must always be the trusted req.user.userId,
+  // never a client-supplied value. Explicit minimal select only: provider,
+  // providerMessageId, lastErrorCode, alertId, and the recipient never
+  // leave this layer. (createdAt, id) DESC tie-break mirrors findPending's
+  // own deterministic-ordering precedent, reversed.
+  //
+  // Known V1 limitation: no index leads with userId (only
+  // @@unique([alertId, userId]) and @@index([status, createdAt]) exist), so
+  // this is not index-served. Acceptable at current volumes; a
+  // [userId, createdAt] index would be a separate, deliberate migration.
+  findLatestForUser: (userId: string) => {
+    return prisma.emailDelivery.findFirst({
+      where: { userId },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      select: {
+        status: true,
+        createdAt: true,
+        claimedAt: true,
+        sentAt: true,
+        failedAt: true,
+      },
+    });
+  },
 };

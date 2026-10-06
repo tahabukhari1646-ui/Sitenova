@@ -2,9 +2,74 @@
 
 import { useId } from "react";
 
+import { StatusBadge } from "@/components/shared/StatusBadge";
 import { Label } from "@/components/ui/label";
+import { formatDateTime } from "@/features/monitoring/utils";
 import { useUpdateNotificationSettings } from "../hooks";
-import type { SettingsNotifications } from "../types";
+import type { EmailDeliveryStatus, LatestEmailDelivery, SettingsNotifications } from "../types";
+
+// Stage 17.6: truthful labels only. SENT means the provider accepted the
+// send -- it is never worded as Delivered/Received/Opened. The text label
+// is always rendered; badge color is a supplementary cue only.
+const DELIVERY_STATUS_DISPLAY: Record<
+  EmailDeliveryStatus,
+  { label: string; badge: "healthy" | "warning" | "critical" | "inactive" }
+> = {
+  PENDING: { label: "Waiting to send", badge: "inactive" },
+  SENDING: { label: "Sending", badge: "warning" },
+  SENT: { label: "Sent", badge: "healthy" },
+  FAILED: { label: "Failed", badge: "critical" },
+};
+
+// One persisted timestamp per status -- never fabricated.
+function getDeliveryTimestamp(latest: LatestEmailDelivery): string {
+  switch (latest.status) {
+    case "SENT":
+      return latest.sentAt ?? latest.createdAt;
+    case "FAILED":
+      return latest.failedAt ?? latest.createdAt;
+    case "SENDING":
+      return latest.claimedAt ?? latest.createdAt;
+    case "PENDING":
+      return latest.createdAt;
+  }
+}
+
+// Read-only, compact status of the user's most recent email delivery.
+// Deliberately no Retry/Resend action and no history (Stage 17.6 scope).
+function EmailDeliveryStatusRow({ latest }: { latest: LatestEmailDelivery | null }) {
+  return (
+    <section
+      aria-label="Email delivery status"
+      className="flex flex-col gap-1 rounded-md border border-border px-3 py-2"
+    >
+      <p className="text-xs font-medium text-muted-foreground">Latest email alert</p>
+      {latest === null ? (
+        <p className="text-sm text-muted-foreground">No email alerts have been processed yet.</p>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <StatusBadge
+              status={DELIVERY_STATUS_DISPLAY[latest.status].badge}
+              label={DELIVERY_STATUS_DISPLAY[latest.status].label}
+            />
+            <time
+              dateTime={getDeliveryTimestamp(latest)}
+              className="text-xs text-muted-foreground"
+            >
+              {formatDateTime(getDeliveryTimestamp(latest))}
+            </time>
+          </div>
+          {latest.status === "FAILED" && (
+            <p className="text-xs text-muted-foreground">
+              Sentinel AI could not send the most recent email alert.
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
 
 interface NotificationPreferencesProps {
   notifications: SettingsNotifications;
@@ -82,7 +147,7 @@ export function NotificationPreferences({ notifications }: NotificationPreferenc
       <ToggleRow
         id={emailId}
         label="Email notifications"
-        description="Allow email alerts once email delivery is available. No emails are sent yet."
+        description="Receive email alerts when Sentinel AI detects or resolves website, SEO, or performance issues."
         checked={notifications.emailEnabled}
         disabled={email.isPending}
         error={email.error}
@@ -90,6 +155,7 @@ export function NotificationPreferences({ notifications }: NotificationPreferenc
           email.updateNotifications({ emailEnabled: checked }).catch(() => {});
         }}
       />
+      <EmailDeliveryStatusRow latest={notifications.emailDelivery.latest} />
     </div>
   );
 }

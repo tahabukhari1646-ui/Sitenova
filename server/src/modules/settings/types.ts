@@ -14,9 +14,25 @@ export interface SettingsAccountDto {
   email: string;
 }
 
+// Stage 17.6: read-only visibility into the user's most recent email
+// delivery. Deliberately minimal -- no provider, providerMessageId,
+// lastErrorCode, recipient, or content is ever exposed. Timestamps are
+// serialized as ISO strings by res.json().
+export type SettingsEmailDeliveryStatus = "PENDING" | "SENDING" | "SENT" | "FAILED";
+
+export interface SettingsLatestEmailDeliveryDto {
+  status: SettingsEmailDeliveryStatus;
+  createdAt: Date;
+  claimedAt: Date | null;
+  sentAt: Date | null;
+  failedAt: Date | null;
+}
+
 export interface SettingsNotificationsDto {
   inAppEnabled: boolean;
   emailEnabled: boolean;
+  // null = the user has no EmailDelivery rows yet (not an error).
+  emailDelivery: { latest: SettingsLatestEmailDeliveryDto | null };
 }
 
 export interface SettingsAppearanceDto {
