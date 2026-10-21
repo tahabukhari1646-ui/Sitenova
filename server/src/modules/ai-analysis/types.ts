@@ -1,8 +1,9 @@
 // Stage 16.1: provider-independent AI contracts for Performance analysis.
-// V1 scope is Performance-only (Stage 16.0 §3) -- no SEO/Uptime input/output
-// shapes exist yet, and none should be speculatively added here.
+// Stage 18.1: extended with the shared DiagnosisAiOutput contract (bottom of
+// this file) for the upcoming SEO/Uptime diagnoses. SEO/Uptime INPUT shapes
+// are added in their own stages, alongside their builders.
 
-export { AiAnalysisStatus } from "../../generated/prisma/client";
+export { AiAnalysisStatus, AiAnalysisSource } from "../../generated/prisma/client";
 
 import type { PerformanceStrategy } from "../performance/types";
 import type { PerformanceRatings } from "../performance/ratings";
@@ -89,4 +90,22 @@ export interface PerformanceAiOutput {
   // be representable as "no issues found", never forced to manufacture a
   // finding. See validation.ts for the upper bound.
   findings: PerformanceAiFinding[];
+}
+
+// --- Stage 18.1: shared diagnosis output contract (SEO + Uptime) ----------
+//
+// Same FACT / INFERENCE / RECOMMENDATION shape as PerformanceAiOutput, plus
+// `limitations` -- what the stored data cannot confirm (e.g. "no failure
+// reason was recorded", "checks run from a single location"). Performance
+// keeps its own PerformanceAiOutput/validation.ts unchanged.
+
+export type DiagnosisAiFinding = PerformanceAiFinding;
+
+export interface DiagnosisAiOutput {
+  summary: string;
+  priority: AiUrgency;
+  // May be empty -- a healthy result must never be forced into a finding.
+  findings: DiagnosisAiFinding[];
+  // May be empty. See diagnosis-validation.ts for bounds.
+  limitations: string[];
 }

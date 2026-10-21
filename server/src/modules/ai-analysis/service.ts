@@ -110,7 +110,10 @@ async function executeManualAnalysis(
 
     return {
       id: created.id,
-      performanceCheckId: created.performanceCheckId,
+      // Stage 18.1: the column is nullable now (SEO/Uptime rows); check.id is
+      // the identical value for this Performance row and keeps the DTO a
+      // non-null string, so the API response is unchanged.
+      performanceCheckId: check.id,
       provider: created.provider,
       model: created.model,
       status: created.status,

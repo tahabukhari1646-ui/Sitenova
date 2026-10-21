@@ -57,6 +57,9 @@ export const aiAnalysisRepository = {
     return prisma.aiAnalysis.create({
       data: {
         ...data,
+        // Stage 18.1: every row this method creates is a Performance
+        // analysis (it only ever receives a performanceCheckId).
+        source: "PERFORMANCE",
         trigger: "MANUAL",
         output: toOutputJson(data.output),
       },
@@ -81,6 +84,8 @@ export const aiAnalysisRepository = {
     try {
       const analysis = await prisma.aiAnalysis.create({
         data: {
+          // Stage 18.1: Performance-only claim path, unchanged otherwise.
+          source: "PERFORMANCE",
           performanceCheckId: data.performanceCheckId,
           provider: data.provider,
           model: data.model,

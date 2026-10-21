@@ -59,6 +59,8 @@ model Incident {
   createdAt  DateTime       @default(now())
   updatedAt  DateTime       @updatedAt
   alerts     Alert[]
+  // Stage 18.1: manual uptime AI diagnoses of this incident.
+  aiAnalyses AiAnalysis[]
 
   // General-purpose index for querying all incidents for a website
   // (e.g. Stage 11.5's future incident history listing).
@@ -377,6 +379,8 @@ model SeoCheck {
 
   checkedAt DateTime @default(now())
   alerts    Alert[]
+  // Stage 18.1: AI SEO diagnoses of this specific check.
+  aiAnalyses AiAnalysis[]
 
   @@index([websiteId, pageUrl, checkedAt])
   @@map("seo_checks")
@@ -423,11 +427,35 @@ enum AiAnalysisTrigger {
   AUTOMATIC
 }
 
+// Stage 18.1: which monitoring domain an AiAnalysis interprets. Same values
+// as AlertSource, but deliberately its own enum so the AI and Alert domains
+// stay decoupled. Every pre-18.1 row was backfilled to PERFORMANCE.
+enum AiAnalysisSource {
+  PERFORMANCE
+  SEO
+  UPTIME
+}
+
 model AiAnalysis {
   id String @id @default(cuid())
 
-  performanceCheckId String
-  performanceCheck   PerformanceCheck @relation(fields: [performanceCheckId], references: [id], onDelete: Cascade)
+  // Stage 18.1: no @default -- every insert site sets it explicitly (same
+  // discipline as provider/model/trigger below).
+  source AiAnalysisSource
+
+  // Stage 18.1: exactly ONE of these three targets is set, and it must match
+  // `source`. Prisma cannot declare that, so migration 22 hand-adds the
+  // CHECK constraint "ai_analyses_exactly_one_target_check". All three are
+  // Cascade (not SetNull): an analysis is meaningless without its target,
+  // and SetNull would violate the CHECK constraint anyway.
+  performanceCheckId String?
+  performanceCheck   PerformanceCheck? @relation(fields: [performanceCheckId], references: [id], onDelete: Cascade)
+
+  seoCheckId String?
+  seoCheck   SeoCheck? @relation(fields: [seoCheckId], references: [id], onDelete: Cascade)
+
+  incidentId String?
+  incident   Incident? @relation(fields: [incidentId], references: [id], onDelete: Cascade)
 
   // Chosen before the provider call is attempted, so both a SUCCEEDED and a
   // FAILED/INVALID_RESPONSE row always know what was tried. No default --
@@ -482,8 +510,19 @@ model AiAnalysis {
   // winner, not a JS variable") -- claimAutomaticAnalysis relies on this
   // constraint rejecting every automatic attempt after the first with a
   // Postgres unique-violation (P2002), not on any in-memory check.
+  //
+  // Stage 18.1: that index is left exactly as-is (rows with a null
+  // performanceCheckId never collide in a Postgres unique index). Migration
+  // 22 hand-adds the SEO equivalent for the future automatic SEO trigger:
+  //   CREATE UNIQUE INDEX "ai_analyses_seo_automatic_unique"
+  //     ON "ai_analyses"("seoCheckId") WHERE "trigger" = 'AUTOMATIC';
+  // Uptime AI is manual-only in V1, so no incident equivalent exists yet.
   @@index([performanceCheckId, inputFingerprint])
   @@index([performanceCheckId, createdAt])
+  @@index([seoCheckId, inputFingerprint])
+  @@index([seoCheckId, createdAt])
+  @@index([incidentId, inputFingerprint])
+  @@index([incidentId, createdAt])
   @@map("ai_analyses")
 }
 
