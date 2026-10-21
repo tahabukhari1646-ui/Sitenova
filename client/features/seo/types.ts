@@ -1,3 +1,9 @@
+import type {
+  AiAnalysisStatus,
+  AiUrgency,
+  PerformanceAiFinding,
+} from "@/features/performance/types";
+
 export type SeoIssueSeverity = "ERROR" | "WARNING" | "INFO";
 
 export type SeoIssueCategory =
@@ -141,4 +147,37 @@ export interface SeoHistoryResult {
 
 export interface SeoCheckResult {
   check: SeoCheckRecord;
+}
+
+// --- Stage 18.4: SEO AI diagnosis (consumes the Stage 18.3 backend
+// verbatim -- see server/src/modules/ai-analysis/service.ts's
+// SeoAiAnalysisResultDto). Findings reuse Performance's finding shape; the
+// output adds `limitations` (what the stored data cannot confirm).
+// `inputFingerprint` is omitted: nothing in this UI displays it.
+
+export interface SeoAiOutput {
+  summary: string;
+  priority: AiUrgency;
+  findings: PerformanceAiFinding[];
+  limitations: string[];
+}
+
+export interface SeoAiAnalysis {
+  id: string;
+  seoCheckId: string;
+  provider: string;
+  model: string;
+  status: AiAnalysisStatus;
+  output: SeoAiOutput | null;
+  createdAt: string;
+}
+
+export interface SeoAiAnalysisResult {
+  analysis: SeoAiAnalysis;
+}
+
+// GET .../ai-analysis/latest -- null when this check has no stored
+// successful analysis yet.
+export interface SeoLatestAiAnalysisResult {
+  analysis: SeoAiAnalysis | null;
 }

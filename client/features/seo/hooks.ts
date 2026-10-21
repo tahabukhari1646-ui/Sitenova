@@ -5,7 +5,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api-client";
 import { alertKeys } from "@/features/alerts/hooks";
 import { notificationKeys } from "@/features/notifications/hooks";
-import { getSeoHistory, getSeoLatest, runSeoCheck } from "./api";
+import {
+  getLatestSeoAiAnalysis,
+  getSeoHistory,
+  getSeoLatest,
+  runSeoAiAnalysis,
+  runSeoCheck,
+} from "./api";
+import type { SeoAiAnalysis } from "./types";
 
 // Stage P2: `pageUrl` is now part of every key, exactly like Performance's
 // own performanceKeys — a homepage SEO query and a /morrisons/ SEO query
@@ -19,6 +26,11 @@ export const seoKeys = {
   // stats/history separation.
   history: (websiteId: string, pageUrl: string) =>
     ["websites", websiteId, "seo", "history", pageUrl] as const,
+  // Stage 18.4: keyed by the exact SeoCheck id -- a different check always
+  // gets a different cache entry, so one check's stored AI diagnosis can
+  // never be served for another.
+  aiLatest: (websiteId: string, seoCheckId: string) =>
+    ["websites", websiteId, "seo", "aiLatest", seoCheckId] as const,
 };
 
 function toErrorMessage(error: unknown, fallback: string): string | null {
@@ -94,6 +106,52 @@ export function useRunSeoCheck(websiteId: string) {
     runCheck: (pageUrl: string) => mutation.mutate(pageUrl),
     isRunning: mutation.isPending,
     error: toErrorMessage(mutation.error, "Unable to complete SEO check."),
+    reset: mutation.reset,
+  };
+}
+
+// Stage 18.4: the stored latest SUCCEEDED AI diagnosis for one exact SEO
+// check, so the card survives a page reload. Read-only: never triggers an
+// analysis. No refetchInterval. Disabled until a real check id is known.
+export function useLatestSeoAiAnalysis(websiteId: string, seoCheckId: string | null) {
+  const query = useQuery({
+    queryKey: seoKeys.aiLatest(websiteId, seoCheckId ?? ""),
+    queryFn: () =>
+      getLatestSeoAiAnalysis(websiteId, seoCheckId as string).then((result) => result.analysis),
+    enabled: Boolean(websiteId) && Boolean(seoCheckId),
+  });
+
+  return {
+    analysis: query.data ?? null,
+    isError: query.isError,
+  };
+}
+
+// Stage 18.4: mirrors useRunPerformanceAiAnalysis. `variables` is exposed so
+// the card can compare "which check was this request FOR" against the
+// currently selected check (identity safety lives in the component). On a
+// SUCCEEDED result, the response is also written into THAT check's aiLatest
+// cache entry; non-SUCCEEDED results are never cached as "latest".
+export function useRunSeoAiAnalysis(websiteId: string) {
+  const queryClient = useQueryClient();
+
+  const mutation = useMutation({
+    mutationFn: ({ seoCheckId }: { seoCheckId: string }) =>
+      runSeoAiAnalysis(websiteId, seoCheckId).then((result) => result.analysis),
+    onSuccess: (analysis: SeoAiAnalysis, { seoCheckId }) => {
+      if (analysis.status === "SUCCEEDED" && analysis.output !== null) {
+        queryClient.setQueryData(seoKeys.aiLatest(websiteId, seoCheckId), analysis);
+      }
+    },
+  });
+
+  return {
+    analyze: (seoCheckId: string) => mutation.mutate({ seoCheckId }),
+    analysis: mutation.data ?? null,
+    requestedCheckId: mutation.variables?.seoCheckId ?? null,
+    isPending: mutation.isPending,
+    isError: mutation.isError,
+    error: toErrorMessage(mutation.error, "AI analysis failed."),
     reset: mutation.reset,
   };
 }

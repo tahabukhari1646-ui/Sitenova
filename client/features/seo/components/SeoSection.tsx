@@ -5,6 +5,7 @@ import { ErrorState } from "@/components/shared/ErrorState";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRunSeoCheck, useSeoLatest } from "../hooks";
+import { SeoAiAnalysisCard } from "./SeoAiAnalysisCard";
 import { SeoHistory } from "./SeoHistory";
 import { SeoIssues } from "./SeoIssues";
 import { SeoMetadata } from "./SeoMetadata";
@@ -95,6 +96,7 @@ export function SeoSection({ websiteId, pageUrl }: SeoSectionProps) {
         <div className="flex flex-col gap-6">
           <SeoOverview check={check} analysis={analysis} />
           <SeoIssues issues={analysis.issues} />
+          <SeoAiAnalysisCard websiteId={websiteId} seoCheckId={check.id} />
           <SeoMetadata check={check} />
           <SeoTechnicalDetails check={check} />
           <SeoHistory websiteId={websiteId} pageUrl={pageUrl} />
