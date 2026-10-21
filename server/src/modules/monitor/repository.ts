@@ -1,4 +1,5 @@
 import { prisma } from "../../config/prisma";
+import { Prisma } from "../../generated/prisma/client";
 import { AlertFilters, CheckResult, HistoryStats, IncidentStatus } from "./types";
 import { decideIncidentAction } from "./incidents";
 import { decideAlertAction } from "./alerts";
@@ -175,6 +176,104 @@ export const monitorRepository = {
     return prisma.incident.findMany({
       where: { websiteId, ...(status ? { status } : {}) },
       orderBy: [{ startedAt: "desc" }, { createdAt: "desc" }],
+    });
+  },
+
+  // --- Stage 18.5: read-only, additive -- used only by the uptime AI ----
+  //
+  // None of these change monitoring behavior. Incidents are not linked to
+  // MonitoringCheck rows, so an incident's checks are found BY TIME within
+  // the same website. Every query is bounded (aggregates computed in SQL,
+  // fixed-size samples). Note: monitoring_checks has no (websiteId,
+  // checkedAt) index yet, so these scan the table -- acceptable for a
+  // manual action; a dedicated index is a separate, later migration.
+  // Negative responseTimeMs values (rare wall-clock jumps) are excluded from
+  // every timing figure -- they are unknown, not fast.
+
+  // "The one exact row the caller already has an id for", intentionally
+  // unscoped; the caller MUST cross-check websiteId against an ownership-
+  // verified website before using it.
+  findIncidentById: (id: string) => {
+    return prisma.incident.findUnique({ where: { id } });
+  },
+
+  // Failure/timing aggregates for checks in [from, to). `timeoutCeilingMs`
+  // splits failures into "hit the request timeout" vs "failed quickly".
+  getIncidentWindowStats: async (websiteId: string, from: Date, to: Date, timeoutCeilingMs: number) => {
+    const rows = await prisma.$queryRaw<
+      {
+        total: number;
+        failed: number;
+        timeouts: number;
+        fast: number;
+        min_rt: number | null;
+        median_rt: number | null;
+        max_rt: number | null;
+        last_at: Date | null;
+      }[]
+    >(Prisma.sql`
+      SELECT
+        count(*)::int AS total,
+        count(*) FILTER (WHERE NOT success)::int AS failed,
+        count(*) FILTER (WHERE NOT success AND "responseTimeMs" >= ${timeoutCeilingMs})::int AS timeouts,
+        count(*) FILTER (WHERE NOT success AND "responseTimeMs" >= 0 AND "responseTimeMs" < ${timeoutCeilingMs})::int AS fast,
+        min("responseTimeMs") FILTER (WHERE NOT success AND "responseTimeMs" >= 0)::int AS min_rt,
+        (percentile_cont(0.5) WITHIN GROUP (ORDER BY "responseTimeMs") FILTER (WHERE NOT success AND "responseTimeMs" >= 0))::int AS median_rt,
+        max("responseTimeMs") FILTER (WHERE NOT success AND "responseTimeMs" >= 0)::int AS max_rt,
+        max("checkedAt") AS last_at
+      FROM monitoring_checks
+      WHERE "websiteId" = ${websiteId} AND "checkedAt" >= ${from} AND "checkedAt" < ${to}
+    `);
+    return rows[0];
+  },
+
+  // A fixed-size sample from one end of [from, to): the first N (asc) or
+  // last N (desc) checks.
+  findIncidentWindowSample: (websiteId: string, from: Date, to: Date, take: number, order: "asc" | "desc") => {
+    return prisma.monitoringCheck.findMany({
+      where: { websiteId, checkedAt: { gte: from, lt: to } },
+      orderBy: [{ checkedAt: order }, { id: order }],
+      take,
+      select: { id: true, checkedAt: true, success: true, statusCode: true, responseTimeMs: true },
+    });
+  },
+
+  // The normal state before the incident: success rate, median successful
+  // response time, and slow successful checks in [from, to).
+  getBaselineStats: async (websiteId: string, from: Date, to: Date, slowThresholdMs: number) => {
+    const rows = await prisma.$queryRaw<
+      { total: number; successful: number; median_rt: number | null; slow: number }[]
+    >(Prisma.sql`
+      SELECT
+        count(*)::int AS total,
+        count(*) FILTER (WHERE success)::int AS successful,
+        (percentile_cont(0.5) WITHIN GROUP (ORDER BY "responseTimeMs") FILTER (WHERE success AND "responseTimeMs" >= 0))::int AS median_rt,
+        count(*) FILTER (WHERE success AND "responseTimeMs" > ${slowThresholdMs})::int AS slow
+      FROM monitoring_checks
+      WHERE "websiteId" = ${websiteId} AND "checkedAt" >= ${from} AND "checkedAt" < ${to}
+    `);
+    return rows[0];
+  },
+
+  findLastSuccessBefore: (websiteId: string, before: Date) => {
+    return prisma.monitoringCheck.findFirst({
+      where: { websiteId, success: true, checkedAt: { lt: before } },
+      orderBy: [{ checkedAt: "desc" }, { id: "desc" }],
+      select: { checkedAt: true, statusCode: true, responseTimeMs: true },
+    });
+  },
+
+  findFirstSuccessAtOrAfter: (websiteId: string, at: Date) => {
+    return prisma.monitoringCheck.findFirst({
+      where: { websiteId, success: true, checkedAt: { gte: at } },
+      orderBy: [{ checkedAt: "asc" }, { id: "asc" }],
+      select: { checkedAt: true, statusCode: true, responseTimeMs: true },
+    });
+  },
+
+  countOtherIncidentsSince: (websiteId: string, since: Date, excludeIncidentId: string) => {
+    return prisma.incident.count({
+      where: { websiteId, startedAt: { gte: since }, id: { not: excludeIncidentId } },
     });
   },
   // Stage 15.4: the temporary source=UPTIME restriction Stage 15.2 added

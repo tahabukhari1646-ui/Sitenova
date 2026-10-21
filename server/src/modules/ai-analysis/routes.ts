@@ -25,5 +25,9 @@ router.get(
 // analysis; GET .../latest is read-only.
 router.post("/:id/seo-checks/:checkId/ai-analysis", aiAnalysisController.analyzeSeoCheck);
 router.get("/:id/seo-checks/:checkId/ai-analysis/latest", aiAnalysisController.getLatestSeoAnalysis);
+// Stage 18.5: uptime diagnosis of one stored incident -- same ownership
+// chain (website, then the incident cross-checked against it). Manual only.
+router.post("/:id/incidents/:incidentId/ai-analysis", aiAnalysisController.analyzeIncident);
+router.get("/:id/incidents/:incidentId/ai-analysis/latest", aiAnalysisController.getLatestIncidentAnalysis);
 
 export default router;

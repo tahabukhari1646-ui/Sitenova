@@ -186,3 +186,71 @@ export interface SeoAiInput {
     resolvedIssueCodes: string[];
   } | null;
 }
+
+// --- Stage 18.5: Uptime (incident) AI input contract -----------------------
+//
+// Built ONLY from stored rows: one Incident plus MonitoringCheck rows found
+// by time for the same website (incidents are not linked to checks). Large
+// incidents are SUMMARIZED (SQL aggregates + a fixed sample), never listed in
+// full. No website URL or name is included -- the AI does not need it.
+//
+// The monitoring facts are passed explicitly so the AI knows what it CANNOT
+// know: failure reasons are not recorded, checks run from one location, and
+// any HTTP response (even 5xx) counts as "up".
+
+export interface IncidentAiCheck {
+  checkedAt: string;
+  success: boolean;
+  statusCode: number | null;
+  // null when the stored value was negative (a wall-clock jump) -- unknown.
+  responseTimeMs: number | null;
+  // true when a FAILED check took at least the timeout ceiling (did not
+  // respond in time); false for successes and fast failures.
+  hitTimeoutCeiling: boolean;
+}
+
+export interface IncidentAiCheckRef {
+  checkedAt: string;
+  statusCode: number | null;
+  responseTimeMs: number | null;
+}
+
+export interface IncidentAiInput {
+  incident: {
+    status: "OPEN" | "RESOLVED";
+    startedAt: string;
+    resolvedAt: string | null;
+    // RESOLVED only; null while the incident is still open.
+    durationMs: number | null;
+    // Latest check inside the incident window, if any.
+    observedUntil: string | null;
+  };
+  monitoring: {
+    checkIntervalSeconds: number;
+    failureConfirmationThreshold: number;
+    requestTimeoutMs: number;
+    timeoutCeilingMs: number;
+    degradedThresholdMs: number;
+    vantagePoints: number;
+    failureReasonRecorded: false;
+    httpErrorsCountAsUp: true;
+  };
+  window: {
+    totalChecks: number;
+    failedChecks: number;
+    timeoutFailures: number;
+    fastFailures: number;
+    failedResponseTimeMs: { min: number; median: number; max: number } | null;
+  };
+  // First and last checks of the window (at most 20), oldest first.
+  sampleChecks: IncidentAiCheck[];
+  baseline24h: {
+    checks: number;
+    successRate: number | null;
+    medianResponseTimeMs: number | null;
+    slowChecks: number;
+    lastSuccessBefore: IncidentAiCheckRef | null;
+  };
+  recovery: { firstSuccess: IncidentAiCheckRef | null };
+  history: { otherIncidentsLast30Days: number };
+}

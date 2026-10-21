@@ -25,6 +25,17 @@ export interface CreateSeoAiAnalysisInput {
   status: "SUCCEEDED" | "FAILED" | "INVALID_RESPONSE";
 }
 
+// Stage 18.5: input for the one UPTIME insert site below (MANUAL only;
+// uptime AI has no automatic trigger in V1).
+export interface CreateUptimeAiAnalysisInput {
+  incidentId: string;
+  provider: string;
+  model: string;
+  inputFingerprint: string;
+  output: DiagnosisAiOutput | null;
+  status: "SUCCEEDED" | "FAILED" | "INVALID_RESPONSE";
+}
+
 function toOutputJson(
   output: PerformanceAiOutput | DiagnosisAiOutput | null
 ): Prisma.InputJsonValue | typeof Prisma.DbNull {
@@ -177,6 +188,43 @@ export const aiAnalysisRepository = {
   // Stage 18.3: read-only SEO equivalent of
   // findRecentSucceededForPerformanceCheck (served by the 18.1
   // (seoCheckId, createdAt) index). Caller must have verified ownership.
+  // Stage 18.5: the ONE UPTIME insert site -- always source UPTIME, trigger
+  // MANUAL, and ONLY incidentId set, so ai_analyses_exactly_one_target_check
+  // holds by construction. Inserted after the provider call resolves.
+  createUptime: (data: CreateUptimeAiAnalysisInput) => {
+    return prisma.aiAnalysis.create({
+      data: {
+        source: "UPTIME",
+        trigger: "MANUAL",
+        incidentId: data.incidentId,
+        provider: data.provider,
+        model: data.model,
+        inputFingerprint: data.inputFingerprint,
+        status: data.status,
+        output: toOutputJson(data.output),
+      },
+    });
+  },
+
+  // Stage 18.5: read-only uptime equivalent (served by the 18.1
+  // (incidentId, createdAt) index). Caller must have verified ownership.
+  findRecentSucceededForIncident: (incidentId: string, take: number) => {
+    return prisma.aiAnalysis.findMany({
+      where: { incidentId, source: "UPTIME", status: "SUCCEEDED" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take,
+      select: {
+        id: true,
+        provider: true,
+        model: true,
+        status: true,
+        inputFingerprint: true,
+        output: true,
+        createdAt: true,
+      },
+    });
+  },
+
   findRecentSucceededForSeoCheck: (seoCheckId: string, take: number) => {
     return prisma.aiAnalysis.findMany({
       where: { seoCheckId, source: "SEO", status: "SUCCEEDED" },

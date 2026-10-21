@@ -5,6 +5,7 @@ import type {
   AiUrgency,
   DiagnosisAiFinding,
   DiagnosisAiOutput,
+  IncidentAiInput,
   SeoAiInput,
 } from "../../modules/ai-analysis/types";
 import type { PerformanceRating } from "../../modules/performance/ratings";
@@ -270,6 +271,72 @@ export class MockAiProvider implements AiProvider {
       priority,
       findings,
       limitations,
+    };
+  }
+
+  // Stage 18.5: deterministic uptime incident diagnosis -- a pure function
+  // of IncidentAiInput. Evidence restates only supplied counts/durations
+  // (FACT); explanations are hedged and keyed ONLY on the timing split
+  // (timeouts vs fast failures), never a stated root cause (INFERENCE).
+  // Limitations always state what monitoring cannot know.
+  async analyzeIncident(input: IncidentAiInput): Promise<DiagnosisAiOutput> {
+    const { incident, window: w, history } = input;
+    const open = incident.status === "OPEN";
+    const minutes = incident.durationMs !== null ? Math.max(1, Math.round(incident.durationMs / 60000)) : null;
+
+    const evidence = [
+      `${w.failedChecks} of ${w.totalChecks} checks in the incident window failed.`,
+      `${w.timeoutFailures} failure(s) reached the ${input.monitoring.requestTimeoutMs} ms request timeout; ${w.fastFailures} failed faster than that.`,
+      open
+        ? `The incident is still open (started ${incident.startedAt}).`
+        : `The incident lasted about ${minutes} minute(s) (from ${incident.startedAt} to ${incident.resolvedAt}).`,
+    ];
+
+    const mostlyTimeouts = w.timeoutFailures > w.fastFailures;
+    const explanation = mostlyTimeouts
+      ? "Most failed checks waited until the request timeout. This may indicate an overloaded or unresponsive server, or a network path problem between the monitor and the site. The exact reason was not recorded."
+      : "Most failed checks failed quickly, before the request timeout. This may indicate a DNS, connection-refused, or TLS/certificate problem. The exact reason was not recorded.";
+
+    const findings: DiagnosisAiFinding[] = [
+      {
+        title: open ? "Website is currently unreachable" : "Website was unreachable",
+        severity: open ? "CRITICAL" : "HIGH",
+        evidence,
+        explanation,
+        confidence: "LOW",
+        recommendations: [
+          "Check your hosting provider's status page and the server's error logs for this time window.",
+          "Verify DNS records and that the domain resolves correctly.",
+          "Check that the SSL/TLS certificate is valid and not expired.",
+          "Review firewall, CDN, or rate-limiting rules that might block requests.",
+        ],
+      },
+    ];
+
+    if (history.otherIncidentsLast30Days >= 2) {
+      findings.push({
+        title: "Recurring incidents",
+        severity: "MEDIUM",
+        evidence: [`${history.otherIncidentsLast30Days} other incident(s) started in the 30 days before this one.`],
+        explanation:
+          "Repeated incidents may point to an ongoing infrastructure or configuration issue rather than a one-off event.",
+        confidence: "LOW",
+        recommendations: ["Compare these incident times with deploys, traffic peaks, or hosting maintenance windows."],
+      });
+    }
+
+    return {
+      summary: open
+        ? `The website has been unreachable since ${incident.startedAt}; ${w.failedChecks} checks have failed so far.`
+        : `The website was unreachable for about ${minutes} minute(s) and has since recovered.`,
+      priority: open ? "CRITICAL" : "HIGH",
+      findings,
+      limitations: [
+        "The failure reason (timeout, DNS, connection, TLS) is not recorded by monitoring.",
+        "Checks run from a single location, so a network-path issue cannot be ruled out.",
+        "HTTP 5xx responses are counted as 'up', so server errors may not appear as downtime.",
+        "No server logs were available.",
+      ],
     };
   }
 }

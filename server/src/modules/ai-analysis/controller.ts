@@ -40,4 +40,23 @@ export const aiAnalysisController = {
 
     res.status(200).json({ success: true, analysis });
   },
+  // Stage 18.5: manual uptime diagnosis of one stored incident.
+  analyzeIncident: async (req: Request<{ id: string; incidentId: string }>, res: Response) => {
+    const { id, incidentId } = req.params;
+
+    const analysis = await aiAnalysisService.analyzeIncident(id, incidentId, req.user!.userId);
+
+    res.status(201).json({ success: true, analysis });
+  },
+  // Stage 18.5: read-only. `analysis` is null (200) when there is none yet.
+  getLatestIncidentAnalysis: async (
+    req: Request<{ id: string; incidentId: string }>,
+    res: Response
+  ) => {
+    const { id, incidentId } = req.params;
+
+    const analysis = await aiAnalysisService.getLatestIncidentAnalysis(id, incidentId, req.user!.userId);
+
+    res.status(200).json({ success: true, analysis });
+  },
 };

@@ -4,7 +4,9 @@ import { AlertFilters, CheckResult, HistoryRange, IncidentStatus } from "./types
 import { NotFoundError } from "../../errors/AppError";
 import { deriveMonitoringStatus } from "./status";
 
-const REQUEST_TIMEOUT_MS = 10_000;
+// Stage 18.5: exported (value unchanged) so the uptime AI input reports the
+// exact timeout the checks actually use, rather than a copy that could drift.
+export const REQUEST_TIMEOUT_MS = 10_000;
 
 const RANGE_MS: Record<HistoryRange, number> = {
   "24h": 24 * 60 * 60 * 1000,

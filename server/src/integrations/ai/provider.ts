@@ -1,5 +1,6 @@
 import type {
   DiagnosisAiOutput,
+  IncidentAiInput,
   PerformanceAiInput,
   PerformanceAiOutput,
   SeoAiInput,
@@ -26,4 +27,7 @@ export interface AiProvider {
   // already-validated DiagnosisAiOutput (diagnosis-validation.ts) or rejects
   // with an AiProviderError.
   analyzeSeo(input: SeoAiInput): Promise<DiagnosisAiOutput>;
+
+  // Stage 18.5: same contract for one stored uptime incident.
+  analyzeIncident(input: IncidentAiInput): Promise<DiagnosisAiOutput>;
 }

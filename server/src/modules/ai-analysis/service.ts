@@ -1,6 +1,7 @@
 import { websiteRepository } from "../website/repository";
 import { performanceRepository } from "../performance/repository";
 import { seoRepository } from "../seo/repository";
+import { monitorRepository } from "../monitor/repository";
 import { aiAnalysisRepository } from "./repository";
 import { buildPerformanceAiInput } from "./input-builder";
 import { computePerformanceAiInputFingerprint } from "./fingerprint";
@@ -8,13 +9,15 @@ import { validatePerformanceAiOutput } from "./validation";
 import { buildSeoAiInput } from "./seo-input-builder";
 import { computeSeoAiInputFingerprint } from "./seo-fingerprint";
 import { validateDiagnosisAiOutput } from "./diagnosis-validation";
+import { loadIncidentAiInput } from "./incident-input-builder";
+import { computeIncidentAiInputFingerprint } from "./incident-fingerprint";
 import { createAiProvider } from "../../integrations/ai/factory";
 import { AiProviderError } from "../../integrations/ai/errors";
 import { AppError, NotFoundError } from "../../errors/AppError";
 import type { AiProvider } from "../../integrations/ai/provider";
 import type { AiAnalysisStatus } from "./types";
 import type { DiagnosisAiOutput, PerformanceAiOutput } from "./types";
-import type { PerformanceCheck, SeoCheck } from "../../generated/prisma/client";
+import type { Incident, PerformanceCheck, SeoCheck } from "../../generated/prisma/client";
 
 // Mirrors every other module's own private verifyOwnership exactly (see
 // performance/service.ts, seo/service.ts) -- deliberately duplicated, not
@@ -186,6 +189,97 @@ async function executeManualSeoAnalysis(
 
     await aiAnalysisRepository.createSeo({
       seoCheckId: check.id,
+      provider: provider.name,
+      model: provider.model,
+      inputFingerprint,
+      output: null,
+      status: statusForProviderError(error),
+    });
+
+    throw new AiAnalysisError(PROVIDER_ERROR_MESSAGES[error.code]);
+  }
+}
+
+// --- Stage 18.5: Uptime (incident) manual diagnosis --------------------------
+
+// Same 8-key shape as the SEO/Performance DTOs, with incidentId as the target.
+export interface IncidentAiAnalysisResultDto {
+  id: string;
+  incidentId: string;
+  provider: string;
+  model: string;
+  status: AiAnalysisStatus;
+  inputFingerprint: string;
+  output: DiagnosisAiOutput | null;
+  createdAt: Date;
+}
+
+// The ONE place an IncidentAiAnalysisResultDto is shaped (POST + GET).
+// incidentId is always the already-verified incident's id.
+function toIncidentAiAnalysisResultDto(
+  row: {
+    id: string;
+    provider: string;
+    model: string;
+    status: AiAnalysisStatus;
+    inputFingerprint: string;
+    createdAt: Date;
+  },
+  incidentId: string,
+  output: DiagnosisAiOutput | null
+): IncidentAiAnalysisResultDto {
+  return {
+    id: row.id,
+    incidentId,
+    provider: row.provider,
+    model: row.model,
+    status: row.status,
+    inputFingerprint: row.inputFingerprint,
+    output,
+    createdAt: row.createdAt,
+  };
+}
+
+// Website ownership first, then the incident cross-checked against THAT
+// website -- missing / another user's / another website's incident are all
+// the same 404.
+async function loadOwnedIncident(websiteId: string, incidentId: string, userId: string): Promise<Incident> {
+  await verifyWebsiteOwnership(websiteId, userId);
+  const incident = await monitorRepository.findIncidentById(incidentId);
+  if (!incident || incident.websiteId !== websiteId) {
+    throw new NotFoundError(`Incident with id '${incidentId}' not found.`);
+  }
+  return incident;
+}
+
+// Mirrors executeManualSeoAnalysis exactly (insert-after-call, one row,
+// FAILED/INVALID_RESPONSE with null output + curated 502 on provider error).
+async function executeManualIncidentAnalysis(
+  incident: Incident,
+  providerOverride?: AiProvider
+): Promise<IncidentAiAnalysisResultDto> {
+  const input = await loadIncidentAiInput(incident);
+  const inputFingerprint = computeIncidentAiInputFingerprint(input);
+  const provider = providerOverride ?? createAiProvider();
+
+  try {
+    const output = await provider.analyzeIncident(input);
+
+    const created = await aiAnalysisRepository.createUptime({
+      incidentId: incident.id,
+      provider: provider.name,
+      model: provider.model,
+      inputFingerprint,
+      output,
+      status: "SUCCEEDED",
+    });
+
+    return toIncidentAiAnalysisResultDto(created, incident.id, output);
+  } catch (error) {
+    if (!(error instanceof AiProviderError)) throw error;
+
+    await aiAnalysisRepository.createUptime({
+      incidentId: incident.id,
       provider: provider.name,
       model: provider.model,
       inputFingerprint,
@@ -427,6 +521,40 @@ export const aiAnalysisService = {
       const validation = validateDiagnosisAiOutput(row.output);
       if (validation.valid) {
         return toSeoAiAnalysisResultDto(row, check.id, validation.output);
+      }
+      console.error(`AI analysis ${row.id}: stored output failed validation; skipped on read.`);
+    }
+
+    return null;
+  },
+
+  // Stage 18.5: manual uptime diagnosis of one stored incident (open or
+  // resolved). Facts come only from stored rows; no monitoring check is run.
+  analyzeIncident: async (
+    websiteId: string,
+    incidentId: string,
+    userId: string,
+    providerOverride?: AiProvider
+  ): Promise<IncidentAiAnalysisResultDto> => {
+    const incident = await loadOwnedIncident(websiteId, incidentId, userId);
+    return executeManualIncidentAnalysis(incident, providerOverride);
+  },
+
+  // Stage 18.5: read-only uptime GET-latest -- same rules as the SEO one.
+  // Never calls a provider, never writes.
+  getLatestIncidentAnalysis: async (
+    websiteId: string,
+    incidentId: string,
+    userId: string
+  ): Promise<IncidentAiAnalysisResultDto | null> => {
+    const incident = await loadOwnedIncident(websiteId, incidentId, userId);
+
+    const rows = await aiAnalysisRepository.findRecentSucceededForIncident(incident.id, LATEST_ANALYSIS_LOOKBACK);
+
+    for (const row of rows) {
+      const validation = validateDiagnosisAiOutput(row.output);
+      if (validation.valid) {
+        return toIncidentAiAnalysisResultDto(row, incident.id, validation.output);
       }
       console.error(`AI analysis ${row.id}: stored output failed validation; skipped on read.`);
     }

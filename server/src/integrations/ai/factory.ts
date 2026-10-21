@@ -40,6 +40,11 @@ class UnknownAiProvider implements AiProvider {
   async analyzeSeo(): Promise<never> {
     throw new AiProviderError("CONFIGURATION_ERROR", this.message);
   }
+
+  // Stage 18.5: identical lazy configuration failure for uptime incidents.
+  async analyzeIncident(): Promise<never> {
+    throw new AiProviderError("CONFIGURATION_ERROR", this.message);
+  }
 }
 
 // Stage 16.2 §11 / Stage 16.3 §6: the single creation boundary -- callers
