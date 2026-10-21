@@ -116,4 +116,28 @@ export const aiAnalysisRepository = {
       },
     });
   },
+
+  // Stage 18.2: read-only. The newest SUCCEEDED Performance analyses for one
+  // check (MANUAL or AUTOMATIC), newest first with an id tie-break. PENDING/
+  // FAILED/INVALID_RESPONSE rows are never returned -- they have no output
+  // to show. Bounded: the service re-validates each row's stored output and
+  // uses the first valid one, so a small window is enough. Served by the
+  // existing (performanceCheckId, createdAt) index. The caller must have
+  // already verified that the check belongs to the authenticated user.
+  findRecentSucceededForPerformanceCheck: (performanceCheckId: string, take: number) => {
+    return prisma.aiAnalysis.findMany({
+      where: { performanceCheckId, source: "PERFORMANCE", status: "SUCCEEDED" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take,
+      select: {
+        id: true,
+        provider: true,
+        model: true,
+        status: true,
+        inputFingerprint: true,
+        output: true,
+        createdAt: true,
+      },
+    });
+  },
 };

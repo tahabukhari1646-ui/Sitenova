@@ -9,7 +9,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { StatusBadge } from "@/components/shared/StatusBadge";
-import { useRunPerformanceAiAnalysis } from "../hooks";
+import { useLatestPerformanceAiAnalysis, useRunPerformanceAiAnalysis } from "../hooks";
 import type { PerformanceAiFinding } from "../types";
 import {
   CONFIDENCE_LABEL,
@@ -91,6 +91,12 @@ export function PerformanceAiAnalysisCard({
 }: PerformanceAiAnalysisCardProps) {
   const { analyze, analysis, requestedCheckId, isPending, isError, error, reset } =
     useRunPerformanceAiAnalysis(websiteId);
+  // Stage 18.2: the stored latest SUCCEEDED analysis for this exact check,
+  // so a result survives a page reload. Read-only; never triggers analysis.
+  const { analysis: storedAnalysis, isError: storedIsError } = useLatestPerformanceAiAnalysis(
+    websiteId,
+    performanceCheckId
+  );
 
   // Stage 16.4 §19/§20 identity safety: a pending/result/error state is
   // only ever shown if it actually belongs to the CURRENTLY selected check.
@@ -100,9 +106,20 @@ export function PerformanceAiAnalysisCard({
   // silently falls back to its initial "Analyze with AI" state instead of
   // ever displaying another check's result under the wrong one.
   const isPendingForCurrent = isPending && requestedCheckId === performanceCheckId;
-  const resultForCurrent =
+  // Stage 18.2: a fresh click result for the current check wins; otherwise
+  // the stored latest -- and BOTH are identity-checked against the current
+  // check id (the stored query is also keyed by it), so a stale result for a
+  // previously selected check can never be shown under the new one.
+  const freshForCurrent =
     analysis && analysis.performanceCheckId === performanceCheckId ? analysis : null;
+  const storedForCurrent =
+    storedAnalysis && storedAnalysis.performanceCheckId === performanceCheckId
+      ? storedAnalysis
+      : null;
+  const resultForCurrent = freshForCurrent ?? storedForCurrent;
   const errorForCurrent = isError && requestedCheckId === performanceCheckId ? error : null;
+  // Only shown when there is nothing else to show -- never blocks "Analyze".
+  const showStoredLoadError = storedIsError && Boolean(performanceCheckId) && !resultForCurrent;
 
   const hasResult = resultForCurrent !== null;
   const buttonLabel = isPendingForCurrent
@@ -159,6 +176,12 @@ export function PerformanceAiAnalysisCard({
         {errorForCurrent && (
           <p role="alert" className="text-sm text-destructive">
             {errorForCurrent}
+          </p>
+        )}
+
+        {showStoredLoadError && (
+          <p className="text-xs text-muted-foreground">
+            Couldn&apos;t load the previous analysis.
           </p>
         )}
 

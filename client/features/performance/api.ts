@@ -4,6 +4,7 @@ import type {
   PerformanceCheckResult,
   PerformanceHistoryRange,
   PerformanceHistoryResult,
+  PerformanceLatestAiAnalysisResult,
   PerformanceLatestResult,
   PerformanceStatsResult,
   PerformanceStrategy,
@@ -84,5 +85,17 @@ export function runPerformanceAiAnalysis(
   return apiFetch<PerformanceAiAnalysisResult>(
     `/websites/${websiteId}/performance-checks/${performanceCheckId}/ai-analysis`,
     { method: "POST" }
+  );
+}
+
+// Stage 18.2: read-only -- the newest stored successful analysis for this
+// exact check (manual or automatic), or `analysis: null`. Never triggers a
+// new AI analysis.
+export function getLatestPerformanceAiAnalysis(
+  websiteId: string,
+  performanceCheckId: string
+): Promise<PerformanceLatestAiAnalysisResult> {
+  return apiFetch<PerformanceLatestAiAnalysisResult>(
+    `/websites/${websiteId}/performance-checks/${performanceCheckId}/ai-analysis/latest`
   );
 }

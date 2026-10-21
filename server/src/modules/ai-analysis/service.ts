@@ -3,6 +3,7 @@ import { performanceRepository } from "../performance/repository";
 import { aiAnalysisRepository } from "./repository";
 import { buildPerformanceAiInput } from "./input-builder";
 import { computePerformanceAiInputFingerprint } from "./fingerprint";
+import { validatePerformanceAiOutput } from "./validation";
 import { createAiProvider } from "../../integrations/ai/factory";
 import { AiProviderError } from "../../integrations/ai/errors";
 import { AppError, NotFoundError } from "../../errors/AppError";
@@ -64,6 +65,39 @@ export interface AiAnalysisResultDto {
   createdAt: Date;
 }
 
+// Stage 18.2: the ONE place an AiAnalysisResultDto is shaped -- used by both
+// the manual POST response and the GET-latest read, so the two contracts can
+// never drift. Key order is part of the contract (JSON serialization order),
+// and is identical to the pre-18.2 POST literal. performanceCheckId is always
+// the already-verified check's id (never the nullable column).
+function toAiAnalysisResultDto(
+  row: {
+    id: string;
+    provider: string;
+    model: string;
+    status: AiAnalysisStatus;
+    inputFingerprint: string;
+    createdAt: Date;
+  },
+  performanceCheckId: string,
+  output: PerformanceAiOutput | null
+): AiAnalysisResultDto {
+  return {
+    id: row.id,
+    performanceCheckId,
+    provider: row.provider,
+    model: row.model,
+    status: row.status,
+    inputFingerprint: row.inputFingerprint,
+    output,
+    createdAt: row.createdAt,
+  };
+}
+
+// Stage 18.2: how many recent SUCCEEDED rows the GET-latest read inspects
+// when looking for the newest one whose stored output still validates.
+const LATEST_ANALYSIS_LOOKBACK = 10;
+
 // Stage 16.3/16.5: the MANUAL execution path -- input building, fingerprint,
 // provider call, Stage 16.1 validation (inside the provider, per Stage
 // 16.2), and persistence mapping. Used ONLY by the manual HTTP endpoint
@@ -108,19 +142,10 @@ async function executeManualAnalysis(
       status: "SUCCEEDED",
     });
 
-    return {
-      id: created.id,
-      // Stage 18.1: the column is nullable now (SEO/Uptime rows); check.id is
-      // the identical value for this Performance row and keeps the DTO a
-      // non-null string, so the API response is unchanged.
-      performanceCheckId: check.id,
-      provider: created.provider,
-      model: created.model,
-      status: created.status,
-      inputFingerprint: created.inputFingerprint,
-      output,
-      createdAt: created.createdAt,
-    };
+    // Stage 18.1: the column is nullable now (SEO/Uptime rows); check.id is
+    // the identical value for this Performance row and keeps the DTO a
+    // non-null string, so the API response is unchanged.
+    return toAiAnalysisResultDto(created, check.id, output);
   } catch (error) {
     if (!(error instanceof AiProviderError)) throw error;
 
@@ -230,6 +255,44 @@ export const aiAnalysisService = {
     );
 
     return executeManualAnalysis(check, predecessor, providerOverride);
+  },
+
+  // Stage 18.2: read-only GET-latest. Same ownership chain and the same 404
+  // messages as analyzePerformanceCheck above (website via :id + userId,
+  // then the check cross-checked against THAT website). Never calls a
+  // provider and never writes.
+  //
+  // Returns the newest SUCCEEDED analysis whose stored output still passes
+  // validatePerformanceAiOutput (defense-in-depth: output was validated
+  // before it was stored, but stored JSON is never trusted blindly). An
+  // invalid row is skipped and logged by id only; if no valid SUCCEEDED row
+  // exists, returns null -- "no analysis yet" is not an error.
+  getLatestPerformanceAnalysis: async (
+    websiteId: string,
+    checkId: string,
+    userId: string
+  ): Promise<AiAnalysisResultDto | null> => {
+    await verifyWebsiteOwnership(websiteId, userId);
+
+    const check = await performanceRepository.findById(checkId);
+    if (!check || check.websiteId !== websiteId) {
+      throw new NotFoundError(`Performance check with id '${checkId}' not found.`);
+    }
+
+    const rows = await aiAnalysisRepository.findRecentSucceededForPerformanceCheck(
+      check.id,
+      LATEST_ANALYSIS_LOOKBACK
+    );
+
+    for (const row of rows) {
+      const validation = validatePerformanceAiOutput(row.output);
+      if (validation.valid) {
+        return toAiAnalysisResultDto(row, check.id, validation.output);
+      }
+      console.error(`AI analysis ${row.id}: stored output failed validation; skipped on read.`);
+    }
+
+    return null;
   },
 
   // Stage 16.5: trusted INTERNAL entry point for the Performance scheduler

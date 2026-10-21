@@ -141,3 +141,9 @@ export interface PerformanceAiAnalysis {
 export interface PerformanceAiAnalysisResult {
   analysis: PerformanceAiAnalysis;
 }
+
+// Stage 18.2: GET .../ai-analysis/latest -- same analysis shape as the POST,
+// or null when the check has no stored successful analysis yet.
+export interface PerformanceLatestAiAnalysisResult {
+  analysis: PerformanceAiAnalysis | null;
+}

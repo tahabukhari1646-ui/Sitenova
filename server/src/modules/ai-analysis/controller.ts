@@ -12,4 +12,16 @@ export const aiAnalysisController = {
 
     res.status(201).json({ success: true, analysis });
   },
+  // Stage 18.2: read-only. `analysis` is null (200, not 404) when the check
+  // has no valid SUCCEEDED analysis yet.
+  getLatestPerformanceAnalysis: async (
+    req: Request<{ id: string; checkId: string }>,
+    res: Response
+  ) => {
+    const { id, checkId } = req.params;
+
+    const analysis = await aiAnalysisService.getLatestPerformanceAnalysis(id, checkId, req.user!.userId);
+
+    res.status(200).json({ success: true, analysis });
+  },
 };

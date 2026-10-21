@@ -6,13 +6,18 @@ import { ApiError } from "@/lib/api-client";
 import { alertKeys } from "@/features/alerts/hooks";
 import { notificationKeys } from "@/features/notifications/hooks";
 import {
+  getLatestPerformanceAiAnalysis,
   getPerformanceHistory,
   getPerformanceLatestCheck,
   getPerformanceStats,
   runPerformanceAiAnalysis,
   runPerformanceCheck,
 } from "./api";
-import type { PerformanceHistoryRange, PerformanceStrategy } from "./types";
+import type {
+  PerformanceAiAnalysis,
+  PerformanceHistoryRange,
+  PerformanceStrategy,
+} from "./types";
 
 // Stage P1: `pageUrl` is now part of every key, exactly like `strategy`
 // already was — a homepage MOBILE query and a /services/ MOBILE query must
@@ -44,6 +49,11 @@ export const performanceKeys = {
   // from a different endpoint.
   latestCheck: (websiteId: string, strategy: PerformanceStrategy, pageUrl: string) =>
     ["websites", websiteId, "performance", "latestCheck", strategy, pageUrl] as const,
+  // Stage 18.2: keyed by the exact PerformanceCheck id -- a different check
+  // always gets a different cache entry, so one check's stored analysis can
+  // never be served for another.
+  aiLatest: (websiteId: string, performanceCheckId: string) =>
+    ["websites", websiteId, "performance", "aiLatest", performanceCheckId] as const,
 };
 
 function toErrorMessage(error: unknown, fallback: string): string | null {
@@ -176,18 +186,51 @@ interface RunPerformanceAiAnalysisArgs {
   performanceCheckId: string;
 }
 
-// Stage 16.4: deliberately does NOT invalidate/cache-write anything --
-// Stage 16.3 has no read/history endpoint for AiAnalysis rows, so there is
-// nothing else in the cache that could be stale as a result of this call.
-// `variables` is exposed (not just `data`) specifically so the consuming
-// component can compare "which check was this mutation FOR" against
-// "which check is currently selected" -- the context-change/race-condition
-// identity safety required by Stage 16.4 §19/§20 is implemented in the
-// component, using these raw mutation fields, not inside this hook.
+// Stage 18.2: the stored latest SUCCEEDED analysis for one exact check
+// (manual or automatic), so the AI card survives a page reload. Read-only:
+// never triggers an analysis. No refetchInterval -- normal React Query
+// refetch behavior only. Disabled until a real check id is known.
+export function useLatestPerformanceAiAnalysis(
+  websiteId: string,
+  performanceCheckId: string | null
+) {
+  const query = useQuery({
+    queryKey: performanceKeys.aiLatest(websiteId, performanceCheckId ?? ""),
+    queryFn: () =>
+      getLatestPerformanceAiAnalysis(websiteId, performanceCheckId as string).then(
+        (result) => result.analysis
+      ),
+    enabled: Boolean(websiteId) && Boolean(performanceCheckId),
+  });
+
+  return {
+    analysis: query.data ?? null,
+    isError: query.isError,
+  };
+}
+
+// Stage 16.4: `variables` is exposed (not just `data`) specifically so the
+// consuming component can compare "which check was this mutation FOR"
+// against "which check is currently selected" -- the context-change/race-
+// condition identity safety required by Stage 16.4 §19/§20 is implemented
+// in the component, using these raw mutation fields, not inside this hook.
+//
+// Stage 18.2: on a SUCCEEDED result, the response is also written into THAT
+// check's aiLatest cache entry (keyed by the check the request was FOR, not
+// whatever is selected now), so a later remount shows it without a refetch.
+// Non-SUCCEEDED results are never cached as "latest" -- the GET endpoint
+// would not return them either.
 export function useRunPerformanceAiAnalysis(websiteId: string) {
+  const queryClient = useQueryClient();
+
   const mutation = useMutation({
     mutationFn: ({ performanceCheckId }: RunPerformanceAiAnalysisArgs) =>
       runPerformanceAiAnalysis(websiteId, performanceCheckId).then((result) => result.analysis),
+    onSuccess: (analysis: PerformanceAiAnalysis, { performanceCheckId }) => {
+      if (analysis.status === "SUCCEEDED" && analysis.output !== null) {
+        queryClient.setQueryData(performanceKeys.aiLatest(websiteId, performanceCheckId), analysis);
+      }
+    },
   });
 
   return {

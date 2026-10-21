@@ -13,5 +13,12 @@ router.use(authenticate);
 // against the check's own websiteId (ai-analysis/service.ts), so neither
 // param is trusted alone.
 router.post("/:id/performance-checks/:checkId/ai-analysis", aiAnalysisController.analyzePerformanceCheck);
+// Stage 18.2: read-only -- the newest stored SUCCEEDED analysis for this
+// check (or null). Same ownership chain as the POST above; never calls a
+// provider.
+router.get(
+  "/:id/performance-checks/:checkId/ai-analysis/latest",
+  aiAnalysisController.getLatestPerformanceAnalysis
+);
 
 export default router;
