@@ -1,16 +1,20 @@
 import { websiteRepository } from "../website/repository";
 import { performanceRepository } from "../performance/repository";
+import { seoRepository } from "../seo/repository";
 import { aiAnalysisRepository } from "./repository";
 import { buildPerformanceAiInput } from "./input-builder";
 import { computePerformanceAiInputFingerprint } from "./fingerprint";
 import { validatePerformanceAiOutput } from "./validation";
+import { buildSeoAiInput } from "./seo-input-builder";
+import { computeSeoAiInputFingerprint } from "./seo-fingerprint";
+import { validateDiagnosisAiOutput } from "./diagnosis-validation";
 import { createAiProvider } from "../../integrations/ai/factory";
 import { AiProviderError } from "../../integrations/ai/errors";
 import { AppError, NotFoundError } from "../../errors/AppError";
 import type { AiProvider } from "../../integrations/ai/provider";
 import type { AiAnalysisStatus } from "./types";
-import type { PerformanceAiOutput } from "./types";
-import type { PerformanceCheck } from "../../generated/prisma/client";
+import type { DiagnosisAiOutput, PerformanceAiOutput } from "./types";
+import type { PerformanceCheck, SeoCheck } from "../../generated/prisma/client";
 
 // Mirrors every other module's own private verifyOwnership exactly (see
 // performance/service.ts, seo/service.ts) -- deliberately duplicated, not
@@ -97,6 +101,101 @@ function toAiAnalysisResultDto(
 // Stage 18.2: how many recent SUCCEEDED rows the GET-latest read inspects
 // when looking for the newest one whose stored output still validates.
 const LATEST_ANALYSIS_LOOKBACK = 10;
+
+// --- Stage 18.3: SEO manual diagnosis ---------------------------------------
+
+// Same 8-key shape as AiAnalysisResultDto, with seoCheckId in place of
+// performanceCheckId and the shared DiagnosisAiOutput as `output`.
+export interface SeoAiAnalysisResultDto {
+  id: string;
+  seoCheckId: string;
+  provider: string;
+  model: string;
+  status: AiAnalysisStatus;
+  inputFingerprint: string;
+  output: DiagnosisAiOutput | null;
+  createdAt: Date;
+}
+
+// The ONE place an SeoAiAnalysisResultDto is shaped (POST + GET), so the two
+// can never drift. seoCheckId is always the already-verified check's id.
+function toSeoAiAnalysisResultDto(
+  row: {
+    id: string;
+    provider: string;
+    model: string;
+    status: AiAnalysisStatus;
+    inputFingerprint: string;
+    createdAt: Date;
+  },
+  seoCheckId: string,
+  output: DiagnosisAiOutput | null
+): SeoAiAnalysisResultDto {
+  return {
+    id: row.id,
+    seoCheckId,
+    provider: row.provider,
+    model: row.model,
+    status: row.status,
+    inputFingerprint: row.inputFingerprint,
+    output,
+    createdAt: row.createdAt,
+  };
+}
+
+// Website ownership first, then the SEO check cross-checked against THAT
+// website -- a missing check, another user's check, or a check from a
+// different website (even one this user owns) are all the same 404.
+async function loadOwnedSeoCheck(websiteId: string, checkId: string, userId: string): Promise<SeoCheck> {
+  await verifyWebsiteOwnership(websiteId, userId);
+  const check = await seoRepository.findById(checkId);
+  if (!check || check.websiteId !== websiteId) {
+    throw new NotFoundError(`SEO check with id '${checkId}' not found.`);
+  }
+  return check;
+}
+
+// Mirrors executeManualAnalysis exactly: build input, fingerprint, call the
+// provider with no open transaction, then exactly ONE insert after it
+// settles. Provider failures persist a FAILED/INVALID_RESPONSE row with null
+// output (never the raw error) and surface as the same curated 502.
+async function executeManualSeoAnalysis(
+  check: SeoCheck,
+  predecessor: SeoCheck | null,
+  providerOverride?: AiProvider
+): Promise<SeoAiAnalysisResultDto> {
+  const input = buildSeoAiInput(check, predecessor);
+  const inputFingerprint = computeSeoAiInputFingerprint(input);
+  const provider = providerOverride ?? createAiProvider();
+
+  try {
+    const output = await provider.analyzeSeo(input);
+
+    const created = await aiAnalysisRepository.createSeo({
+      seoCheckId: check.id,
+      provider: provider.name,
+      model: provider.model,
+      inputFingerprint,
+      output,
+      status: "SUCCEEDED",
+    });
+
+    return toSeoAiAnalysisResultDto(created, check.id, output);
+  } catch (error) {
+    if (!(error instanceof AiProviderError)) throw error;
+
+    await aiAnalysisRepository.createSeo({
+      seoCheckId: check.id,
+      provider: provider.name,
+      model: provider.model,
+      inputFingerprint,
+      output: null,
+      status: statusForProviderError(error),
+    });
+
+    throw new AiAnalysisError(PROVIDER_ERROR_MESSAGES[error.code]);
+  }
+}
 
 // Stage 16.3/16.5: the MANUAL execution path -- input building, fingerprint,
 // provider call, Stage 16.1 validation (inside the provider, per Stage
@@ -288,6 +387,46 @@ export const aiAnalysisService = {
       const validation = validatePerformanceAiOutput(row.output);
       if (validation.valid) {
         return toAiAnalysisResultDto(row, check.id, validation.output);
+      }
+      console.error(`AI analysis ${row.id}: stored output failed validation; skipped on read.`);
+    }
+
+    return null;
+  },
+
+  // Stage 18.3: manual SEO diagnosis of one stored SeoCheck. The predecessor
+  // is the check immediately before it on the SAME page, so new/resolved
+  // issues describe exactly this check's transition. No crawl, no fetch.
+  analyzeSeoCheck: async (
+    websiteId: string,
+    checkId: string,
+    userId: string,
+    providerOverride?: AiProvider
+  ): Promise<SeoAiAnalysisResultDto> => {
+    const check = await loadOwnedSeoCheck(websiteId, checkId, userId);
+    const predecessor = await seoRepository.findImmediatePredecessor(check.websiteId, check.pageUrl, {
+      checkedAt: check.checkedAt,
+      id: check.id,
+    });
+    return executeManualSeoAnalysis(check, predecessor, providerOverride);
+  },
+
+  // Stage 18.3: read-only SEO GET-latest -- same rules as
+  // getLatestPerformanceAnalysis, validated with validateDiagnosisAiOutput.
+  // Never calls a provider, never writes.
+  getLatestSeoAnalysis: async (
+    websiteId: string,
+    checkId: string,
+    userId: string
+  ): Promise<SeoAiAnalysisResultDto | null> => {
+    const check = await loadOwnedSeoCheck(websiteId, checkId, userId);
+
+    const rows = await aiAnalysisRepository.findRecentSucceededForSeoCheck(check.id, LATEST_ANALYSIS_LOOKBACK);
+
+    for (const row of rows) {
+      const validation = validateDiagnosisAiOutput(row.output);
+      if (validation.valid) {
+        return toSeoAiAnalysisResultDto(row, check.id, validation.output);
       }
       console.error(`AI analysis ${row.id}: stored output failed validation; skipped on read.`);
     }

@@ -57,6 +57,36 @@ export const seoRepository = {
       orderBy: [{ checkedAt: "desc" }, { id: "desc" }],
     });
   },
+  // Stage 18.3: read-only, additive -- used only by the SEO AI diagnosis.
+  // "The one exact row the caller already has an id for", intentionally
+  // unscoped (mirrors performanceRepository.findById); the caller MUST
+  // cross-check the returned row's websiteId against an already
+  // ownership-verified website before using it.
+  findById: (id: string) => {
+    return prisma.seoCheck.findUnique({ where: { id } });
+  },
+  // Stage 18.3: read-only, additive. The check immediately BEFORE `before`
+  // within the SAME (websiteId, pageUrl) stream -- never another page or
+  // website, and never a check from `before`'s own future. Same (checkedAt,
+  // id) compound tie-break as findLatest above and as
+  // performanceRepository.findImmediatePredecessor.
+  findImmediatePredecessor: (
+    websiteId: string,
+    pageUrl: string,
+    before: { checkedAt: Date; id: string }
+  ) => {
+    return prisma.seoCheck.findFirst({
+      where: {
+        websiteId,
+        pageUrl,
+        OR: [
+          { checkedAt: { lt: before.checkedAt } },
+          { checkedAt: before.checkedAt, id: { lt: before.id } },
+        ],
+      },
+      orderBy: [{ checkedAt: "desc" }, { id: "desc" }],
+    });
+  },
   // Stage 14.8: fetches ONE row more than the public cap so the oldest
   // VISIBLE row can still be correctly compared against its true previous
   // snapshot for change-tracking. That extra (101st) row is a comparison

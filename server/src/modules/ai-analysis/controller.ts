@@ -24,4 +24,20 @@ export const aiAnalysisController = {
 
     res.status(200).json({ success: true, analysis });
   },
+  // Stage 18.3: manual SEO diagnosis of one stored SeoCheck.
+  analyzeSeoCheck: async (req: Request<{ id: string; checkId: string }>, res: Response) => {
+    const { id, checkId } = req.params;
+
+    const analysis = await aiAnalysisService.analyzeSeoCheck(id, checkId, req.user!.userId);
+
+    res.status(201).json({ success: true, analysis });
+  },
+  // Stage 18.3: read-only. `analysis` is null (200) when there is none yet.
+  getLatestSeoAnalysis: async (req: Request<{ id: string; checkId: string }>, res: Response) => {
+    const { id, checkId } = req.params;
+
+    const analysis = await aiAnalysisService.getLatestSeoAnalysis(id, checkId, req.user!.userId);
+
+    res.status(200).json({ success: true, analysis });
+  },
 };

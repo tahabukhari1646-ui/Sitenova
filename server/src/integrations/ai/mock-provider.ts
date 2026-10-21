@@ -1,4 +1,12 @@
-import type { PerformanceAiInput, PerformanceAiOutput, PerformanceAiFinding, AiUrgency } from "../../modules/ai-analysis/types";
+import type {
+  PerformanceAiInput,
+  PerformanceAiOutput,
+  PerformanceAiFinding,
+  AiUrgency,
+  DiagnosisAiFinding,
+  DiagnosisAiOutput,
+  SeoAiInput,
+} from "../../modules/ai-analysis/types";
 import type { PerformanceRating } from "../../modules/performance/ratings";
 import type { AiProvider } from "./provider";
 
@@ -213,6 +221,55 @@ export class MockAiProvider implements AiProvider {
       summary: `Found ${findings.length} performance issue${findings.length === 1 ? "" : "s"} in this check (highest priority: ${overallPriority}).`,
       priority: overallPriority,
       findings,
+    };
+  }
+
+  // Stage 18.3: deterministic SEO diagnosis -- a pure function of SeoAiInput.
+  // Sentinel's own issue severities (seo/issues.ts) are the SOLE trigger: one
+  // finding per ERROR/WARNING issue (INFO is never escalated), capped at the
+  // validator's 10-finding limit. Evidence restates only Sentinel's own issue
+  // text (FACT); the explanation is hedged (INFERENCE); the recommendation is
+  // the issue's own fixed recommendation. Every string is capped to the
+  // diagnosis-validation.ts bounds.
+  async analyzeSeo(input: SeoAiInput): Promise<DiagnosisAiOutput> {
+    const cap = (value: string, max: number) => (value.length <= max ? value : value.slice(0, max - 1) + "…");
+    const alertable = input.issues.filter((i) => i.severity === "ERROR" || i.severity === "WARNING");
+
+    const findings: DiagnosisAiFinding[] = alertable.slice(0, 10).map((issue) => ({
+      title: cap(`SEO issue: ${issue.code}`, 150),
+      severity: issue.severity === "ERROR" ? "HIGH" : "MEDIUM",
+      evidence: [cap(issue.message, 300), ...(issue.evidence ? [cap(issue.evidence, 300)] : [])],
+      explanation: cap(
+        issue.severity === "ERROR"
+          ? "Sentinel AI flagged this as an error. It may prevent search engines from crawling, indexing, or correctly understanding this page."
+          : "Sentinel AI flagged this as a warning. It may reduce how clearly search engines understand or present this page; impact varies by page and site.",
+        1000
+      ),
+      confidence: "MEDIUM",
+      recommendations: [cap(issue.recommendation, 300)],
+    }));
+
+    const limitations = [
+      "Only this single page and this single check were analyzed.",
+      "No search ranking, traffic, or Search Console data was available.",
+      "Page text was not provided -- only lengths and counts -- so no specific wording is suggested.",
+    ];
+
+    if (findings.length === 0) {
+      return {
+        summary: "No SEO errors or warnings were found in this check.",
+        priority: "LOW",
+        findings: [],
+        limitations,
+      };
+    }
+
+    const priority: AiUrgency = alertable.some((i) => i.severity === "ERROR") ? "HIGH" : "MEDIUM";
+    return {
+      summary: `Found ${alertable.length} SEO issue${alertable.length === 1 ? "" : "s"} needing attention (highest priority: ${priority}).`,
+      priority,
+      findings,
+      limitations,
     };
   }
 }

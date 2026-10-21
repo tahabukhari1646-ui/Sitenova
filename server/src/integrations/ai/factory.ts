@@ -35,6 +35,11 @@ class UnknownAiProvider implements AiProvider {
   async analyzePerformance(): Promise<never> {
     throw new AiProviderError("CONFIGURATION_ERROR", this.message);
   }
+
+  // Stage 18.3: identical lazy configuration failure for SEO.
+  async analyzeSeo(): Promise<never> {
+    throw new AiProviderError("CONFIGURATION_ERROR", this.message);
+  }
 }
 
 // Stage 16.2 §11 / Stage 16.3 §6: the single creation boundary -- callers

@@ -1,6 +1,6 @@
 import { prisma } from "../../config/prisma";
 import { Prisma } from "../../generated/prisma/client";
-import type { PerformanceAiOutput } from "./types";
+import type { DiagnosisAiOutput, PerformanceAiOutput } from "./types";
 import type { AiAnalysis } from "../../generated/prisma/client";
 
 export interface CreateAiAnalysisInput {
@@ -14,7 +14,20 @@ export interface CreateAiAnalysisInput {
   status: "SUCCEEDED" | "FAILED" | "INVALID_RESPONSE";
 }
 
-function toOutputJson(output: PerformanceAiOutput | null): Prisma.InputJsonValue | typeof Prisma.DbNull {
+// Stage 18.3: input for the one SEO insert site below (MANUAL only;
+// automatic SEO arrives in a later stage with its own claim path).
+export interface CreateSeoAiAnalysisInput {
+  seoCheckId: string;
+  provider: string;
+  model: string;
+  inputFingerprint: string;
+  output: DiagnosisAiOutput | null;
+  status: "SUCCEEDED" | "FAILED" | "INVALID_RESPONSE";
+}
+
+function toOutputJson(
+  output: PerformanceAiOutput | DiagnosisAiOutput | null
+): Prisma.InputJsonValue | typeof Prisma.DbNull {
   // `Prisma.DbNull` (not plain `null`) is required to actually store SQL
   // NULL in a nullable Json column -- a bare `null` is reserved by Prisma
   // for "this field is absent from the update," and a literal JSON null
@@ -127,6 +140,46 @@ export const aiAnalysisRepository = {
   findRecentSucceededForPerformanceCheck: (performanceCheckId: string, take: number) => {
     return prisma.aiAnalysis.findMany({
       where: { performanceCheckId, source: "PERFORMANCE", status: "SUCCEEDED" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take,
+      select: {
+        id: true,
+        provider: true,
+        model: true,
+        status: true,
+        inputFingerprint: true,
+        output: true,
+        createdAt: true,
+      },
+    });
+  },
+
+  // Stage 18.3: the ONE SEO insert site -- always source SEO, trigger MANUAL,
+  // and ONLY seoCheckId set (performanceCheckId/incidentId stay null), so the
+  // ai_analyses_exactly_one_target_check constraint is satisfied by
+  // construction. Inserted after the provider call resolves, exactly like
+  // the Performance manual path's `create` above.
+  createSeo: (data: CreateSeoAiAnalysisInput) => {
+    return prisma.aiAnalysis.create({
+      data: {
+        source: "SEO",
+        trigger: "MANUAL",
+        seoCheckId: data.seoCheckId,
+        provider: data.provider,
+        model: data.model,
+        inputFingerprint: data.inputFingerprint,
+        status: data.status,
+        output: toOutputJson(data.output),
+      },
+    });
+  },
+
+  // Stage 18.3: read-only SEO equivalent of
+  // findRecentSucceededForPerformanceCheck (served by the 18.1
+  // (seoCheckId, createdAt) index). Caller must have verified ownership.
+  findRecentSucceededForSeoCheck: (seoCheckId: string, take: number) => {
+    return prisma.aiAnalysis.findMany({
+      where: { seoCheckId, source: "SEO", status: "SUCCEEDED" },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take,
       select: {

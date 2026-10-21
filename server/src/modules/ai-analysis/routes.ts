@@ -20,5 +20,10 @@ router.get(
   "/:id/performance-checks/:checkId/ai-analysis/latest",
   aiAnalysisController.getLatestPerformanceAnalysis
 );
+// Stage 18.3: SEO diagnosis of one stored SeoCheck -- same ownership chain
+// (website, then the check cross-checked against it). POST runs the manual
+// analysis; GET .../latest is read-only.
+router.post("/:id/seo-checks/:checkId/ai-analysis", aiAnalysisController.analyzeSeoCheck);
+router.get("/:id/seo-checks/:checkId/ai-analysis/latest", aiAnalysisController.getLatestSeoAnalysis);
 
 export default router;

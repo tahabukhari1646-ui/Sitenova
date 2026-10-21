@@ -109,3 +109,80 @@ export interface DiagnosisAiOutput {
   // May be empty. See diagnosis-validation.ts for bounds.
   limitations: string[];
 }
+
+// --- Stage 18.3: SEO AI input contract -------------------------------------
+//
+// Built ONLY from one stored SeoCheck (+ its immediate same-page
+// predecessor) via the existing deterministic engines (toObservation,
+// analyzeSeoIssues, deriveSeoChanges) -- no crawl, no fetch.
+//
+// Deliberately contains NO scraped page text: no title / meta description /
+// H1 text, no canonical or final URL, no robots directive strings, no
+// robots.txt/sitemap URLs, no structured-data @type names. Only lengths,
+// counts, booleans, fixed enums, Sentinel's own templated issue text, and
+// stable codes. Scraped text is untrusted (prompt-injection risk) and not
+// needed to explain the facts.
+
+export type SeoAiIssueSeverity = "ERROR" | "WARNING" | "INFO";
+export type SeoAiDiscoveryStatus = "FOUND" | "NOT_FOUND" | "UNKNOWN";
+
+export interface SeoAiIssue {
+  code: string;
+  severity: SeoAiIssueSeverity;
+  category: string;
+  // Sentinel-authored, templated from numbers/fixed words only (issues.ts).
+  message: string;
+  // Only numeric evidence (counts) is kept; text evidence such as the raw
+  // title/meta/canonical URL is always null -- see seo-input-builder.ts.
+  evidence: string | null;
+  recommendation: string;
+}
+
+export interface SeoAiChangedField {
+  code: string;
+  category: string;
+  // Present ONLY when both sides are a number/boolean/null. Text values
+  // (title, meta description, H1, canonical, structured-data types) are
+  // always omitted -- only the fact that the field changed is kept.
+  previous?: number | boolean | null;
+  current?: number | boolean | null;
+}
+
+export interface SeoAiInput {
+  pageUrl: string;
+  isBaseline: boolean;
+  http: {
+    statusCode: number;
+    redirected: boolean;
+    finalUrlIsHttps: boolean;
+    finalUrlSameOrigin: boolean;
+  };
+  indexability: "INDEXABLE" | "NOT_INDEXABLE" | "UNKNOWN";
+  metadata: {
+    titleLength: number | null;
+    metaDescriptionLength: number | null;
+    canonicalPresent: boolean;
+    robotsMetaPresent: boolean;
+    xRobotsTagPresent: boolean;
+  };
+  headings: { h1Count: number; h1Length: number | null; h2Count: number; h3Count: number };
+  content: { wordCount: number };
+  links: { internal: number; external: number };
+  images: { total: number; missingAlt: number };
+  structuredData: { jsonLdCount: number; invalidCount: number; typeCount: number };
+  discovery: { robotsTxt: SeoAiDiscoveryStatus; sitemap: SeoAiDiscoveryStatus };
+  // Sentinel's own heuristic thresholds (issues.ts) -- not Google rules.
+  thresholds: {
+    titleMin: number;
+    titleMax: number;
+    metaDescriptionMin: number;
+    metaDescriptionMax: number;
+  };
+  issues: SeoAiIssue[];
+  // null for a baseline (first check of this page).
+  changes: {
+    fields: SeoAiChangedField[];
+    newIssueCodes: string[];
+    resolvedIssueCodes: string[];
+  } | null;
+}
