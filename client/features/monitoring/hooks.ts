@@ -1,11 +1,30 @@
 "use client";
 
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ApiError } from "@/lib/api-client";
 import type { IncidentStatus, MonitoringCheck } from "@/types";
-import { getHistory, getIncidents, getLatestCheck } from "./api";
-import type { HistoryRange } from "./types";
+import {
+  getHistory,
+  getIncidents,
+  getLatestCheck,
+  getLatestIncidentAiAnalysis,
+  runIncidentAiAnalysis,
+} from "./api";
+import type { HistoryRange, IncidentAiAnalysis } from "./types";
+
+// Stage 18.6: a separate root from the incident list's own
+// ["websites", id, "incidents", status] keys, so the two can never collide,
+// share, or be invalidated together. Keyed by the exact incident id.
+export const incidentAiKeys = {
+  latest: (websiteId: string, incidentId: string) =>
+    ["websites", websiteId, "incidentAi", incidentId] as const,
+};
+
+function toAiErrorMessage(error: unknown, fallback: string): string | null {
+  if (!error) return null;
+  return error instanceof ApiError ? error.message : fallback;
+}
 
 // The backend's monitoring cron runs every 60s (server/src/modules/monitor/scheduler.ts).
 // Polling somewhat faster than that surfaces a fresh automatic check promptly
@@ -105,5 +124,55 @@ export function useIncidents(id: string, status?: IncidentStatus) {
           ? "Failed to load incidents."
           : null,
     refetch: query.refetch,
+  };
+}
+
+// Stage 18.6: the stored latest SUCCEEDED AI diagnosis for one exact
+// incident. Read-only; never triggers an analysis; no refetchInterval.
+// `enabled` lets the panel fetch ONLY when it is opened, so a list of many
+// incidents never fires one request per row on page load.
+export function useLatestIncidentAiAnalysis(
+  websiteId: string,
+  incidentId: string,
+  enabled: boolean
+) {
+  const query = useQuery({
+    queryKey: incidentAiKeys.latest(websiteId, incidentId),
+    queryFn: () =>
+      getLatestIncidentAiAnalysis(websiteId, incidentId).then((result) => result.analysis),
+    enabled: enabled && Boolean(websiteId) && Boolean(incidentId),
+  });
+
+  return {
+    analysis: query.data ?? null,
+    isLoading: query.isPending && query.fetchStatus !== "idle",
+    isError: query.isError,
+  };
+}
+
+// Stage 18.6: mirrors useRunSeoAiAnalysis. On a SUCCEEDED result the response
+// is also written into THAT incident's cache entry (keyed by the incident
+// the request was FOR); non-SUCCEEDED results are never cached as "latest".
+export function useRunIncidentAiAnalysis(websiteId: string) {
+  const queryClient = useQueryClient();
+
+  const mutation = useMutation({
+    mutationFn: ({ incidentId }: { incidentId: string }) =>
+      runIncidentAiAnalysis(websiteId, incidentId).then((result) => result.analysis),
+    onSuccess: (analysis: IncidentAiAnalysis, { incidentId }) => {
+      if (analysis.status === "SUCCEEDED" && analysis.output !== null) {
+        queryClient.setQueryData(incidentAiKeys.latest(websiteId, incidentId), analysis);
+      }
+    },
+  });
+
+  return {
+    analyze: (incidentId: string) => mutation.mutate({ incidentId }),
+    analysis: mutation.data ?? null,
+    requestedIncidentId: mutation.variables?.incidentId ?? null,
+    isPending: mutation.isPending,
+    isError: mutation.isError,
+    error: toAiErrorMessage(mutation.error, "AI analysis failed."),
+    reset: mutation.reset,
   };
 }

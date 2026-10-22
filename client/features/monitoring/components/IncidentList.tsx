@@ -17,36 +17,62 @@ import {
   formatDuration,
   getIncidentDurationMs,
 } from "../utils";
+import { IncidentAiPanel } from "./IncidentAiPanel";
 import { IncidentFilter, type IncidentFilterValue } from "./IncidentFilter";
 
 interface IncidentListProps {
   websiteId: string;
 }
 
-function IncidentRow({ incident }: { incident: Incident }) {
+// Stage 18.6: the original row content (badge, times, duration) is
+// unchanged; the Card's outer layout now stacks it above an optional AI
+// diagnosis panel. The panel is mounted only while open, so its stored
+// diagnosis is fetched on demand -- never once per row on page load.
+function IncidentRow({ websiteId, incident }: { websiteId: string; incident: Incident }) {
   const durationMs = getIncidentDurationMs(incident);
+  const [aiOpen, setAiOpen] = useState(false);
 
   return (
-    <Card className="gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
-      <div className="flex flex-col gap-1 overflow-hidden">
-        <div className="flex flex-wrap items-center gap-2">
-          <StatusBadge
-            status={INCIDENT_STATUS_BADGE[incident.status]}
-            label={incident.status === "OPEN" ? "Open" : "Resolved"}
-          />
-          <span className="text-sm text-muted-foreground">
-            Started {formatDateTime(incident.startedAt)}
-          </span>
+    <Card className="gap-3 p-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-1 overflow-hidden">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge
+              status={INCIDENT_STATUS_BADGE[incident.status]}
+              label={incident.status === "OPEN" ? "Open" : "Resolved"}
+            />
+            <span className="text-sm text-muted-foreground">
+              Started {formatDateTime(incident.startedAt)}
+            </span>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {incident.resolvedAt
+              ? `Resolved ${formatDateTime(incident.resolvedAt)}`
+              : "Still ongoing"}
+          </p>
         </div>
-        <p className="text-sm text-muted-foreground">
-          {incident.resolvedAt
-            ? `Resolved ${formatDateTime(incident.resolvedAt)}`
-            : "Still ongoing"}
-        </p>
+        <div className="flex shrink-0 items-center gap-3">
+          <p className="text-sm font-medium">
+            {durationMs !== null ? formatDuration(durationMs) : "Ongoing"}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-expanded={aiOpen}
+            onClick={() => setAiOpen((open) => !open)}
+          >
+            {aiOpen ? "Hide AI diagnosis" : "AI diagnosis"}
+          </Button>
+        </div>
       </div>
-      <p className="shrink-0 text-sm font-medium">
-        {durationMs !== null ? formatDuration(durationMs) : "Ongoing"}
-      </p>
+      {aiOpen && (
+        <IncidentAiPanel
+          websiteId={websiteId}
+          incidentId={incident.id}
+          incidentStatus={incident.status}
+        />
+      )}
     </Card>
   );
 }
@@ -126,7 +152,7 @@ export function IncidentList({ websiteId }: IncidentListProps) {
       ) : (
         <div className="flex flex-col gap-3">
           {list.incidents.map((incident) => (
-            <IncidentRow key={incident.id} incident={incident} />
+            <IncidentRow key={incident.id} websiteId={websiteId} incident={incident} />
           ))}
         </div>
       )}
