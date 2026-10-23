@@ -3,6 +3,25 @@ import { Prisma } from "../../generated/prisma/client";
 import type { DiagnosisAiOutput, PerformanceAiOutput } from "./types";
 import type { AiAnalysis } from "../../generated/prisma/client";
 
+// Stage 18.7: one analysis target, used by the cost-control queries below.
+// `source` and the matching id column always travel together, mirroring the
+// ai_analyses_exactly_one_target_check constraint.
+export type AiAnalysisTarget =
+  | { source: "PERFORMANCE"; id: string }
+  | { source: "SEO"; id: string }
+  | { source: "UPTIME"; id: string };
+
+function targetWhere(target: AiAnalysisTarget) {
+  switch (target.source) {
+    case "PERFORMANCE":
+      return { source: "PERFORMANCE" as const, performanceCheckId: target.id };
+    case "SEO":
+      return { source: "SEO" as const, seoCheckId: target.id };
+    case "UPTIME":
+      return { source: "UPTIME" as const, incidentId: target.id };
+  }
+}
+
 export interface CreateAiAnalysisInput {
   performanceCheckId: string;
   provider: string;
@@ -188,6 +207,65 @@ export const aiAnalysisRepository = {
   // Stage 18.3: read-only SEO equivalent of
   // findRecentSucceededForPerformanceCheck (served by the 18.1
   // (seoCheckId, createdAt) index). Caller must have verified ownership.
+  // --- Stage 18.7: cost-control reads (read-only) ---------------------------
+
+  // Reuse candidates: SUCCEEDED rows for the SAME target, input fingerprint,
+  // provider AND model (so switching mock -> OpenAI never serves an old mock
+  // result), newest first. The service re-validates each row's output and
+  // uses the first valid one. Served by the existing (target,
+  // inputFingerprint) indexes. Any trigger (MANUAL or AUTOMATIC) may be
+  // reused -- both are equally valid analyses of identical facts.
+  findReusableCandidates: (
+    target: AiAnalysisTarget,
+    inputFingerprint: string,
+    provider: string,
+    model: string,
+    take: number
+  ) => {
+    return prisma.aiAnalysis.findMany({
+      where: { ...targetWhere(target), status: "SUCCEEDED", inputFingerprint, provider, model },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take,
+      select: {
+        id: true,
+        provider: true,
+        model: true,
+        status: true,
+        inputFingerprint: true,
+        output: true,
+        createdAt: true,
+      },
+    });
+  },
+
+  // When the last MANUAL run (any status -- a FAILED attempt still counts)
+  // was created for this target, or null. Used for the per-target cooldown.
+  findLatestManualCreatedAt: async (target: AiAnalysisTarget): Promise<Date | null> => {
+    const row = await prisma.aiAnalysis.findFirst({
+      where: { ...targetWhere(target), trigger: "MANUAL" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      select: { createdAt: true },
+    });
+    return row?.createdAt ?? null;
+  },
+
+  // MANUAL runs (any status) since `since` across ALL three target kinds for
+  // websites owned by `userId` -- the rolling daily limit. Ownership is
+  // resolved through each target's own website, never a client value.
+  countManualSinceForUser: (userId: string, since: Date) => {
+    return prisma.aiAnalysis.count({
+      where: {
+        trigger: "MANUAL",
+        createdAt: { gte: since },
+        OR: [
+          { performanceCheck: { website: { userId } } },
+          { seoCheck: { website: { userId } } },
+          { incident: { website: { userId } } },
+        ],
+      },
+    });
+  },
+
   // Stage 18.5: the ONE UPTIME insert site -- always source UPTIME, trigger
   // MANUAL, and ONLY incidentId set, so ai_analyses_exactly_one_target_check
   // holds by construction. Inserted after the provider call resolves.

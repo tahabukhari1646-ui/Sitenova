@@ -11,6 +11,8 @@ import { computeSeoAiInputFingerprint } from "./seo-fingerprint";
 import { validateDiagnosisAiOutput } from "./diagnosis-validation";
 import { loadIncidentAiInput } from "./incident-input-builder";
 import { computeIncidentAiInputFingerprint } from "./incident-fingerprint";
+import { enforceManualLimits, isAutomaticAiEnabled } from "./cost-controls";
+import type { AiAnalysisTarget } from "./repository";
 import { createAiProvider } from "../../integrations/ai/factory";
 import { AiProviderError } from "../../integrations/ai/errors";
 import { AppError, NotFoundError } from "../../errors/AppError";
@@ -105,6 +107,46 @@ function toAiAnalysisResultDto(
 // when looking for the newest one whose stored output still validates.
 const LATEST_ANALYSIS_LOOKBACK = 10;
 
+// --- Stage 18.7: cost controls (shared by all three manual paths) ----------
+
+// What every manual POST returns: the analysis plus whether it was REUSED
+// (no provider call, no new row). The controller maps reused -> HTTP 200,
+// new -> HTTP 201; the response body shape is unchanged either way.
+export interface ManualAnalysisResult<T> {
+  analysis: T;
+  reused: boolean;
+}
+
+export interface ManualAnalysisOptions {
+  // true skips the free reuse step only -- never the cooldown/daily limit.
+  force?: boolean;
+}
+
+type OutputValidator<T> = (value: unknown) => { valid: true; output: T } | { valid: false; error: string };
+
+// Step 1 of the cost controls: the newest SUCCEEDED analysis for the same
+// target, input fingerprint, provider and model whose stored output still
+// validates -- or null. Free: never calls a provider, never writes.
+async function findValidReusable<T>(
+  target: AiAnalysisTarget,
+  inputFingerprint: string,
+  provider: AiProvider,
+  validate: OutputValidator<T>
+) {
+  const rows = await aiAnalysisRepository.findReusableCandidates(
+    target,
+    inputFingerprint,
+    provider.name,
+    provider.model,
+    LATEST_ANALYSIS_LOOKBACK
+  );
+  for (const row of rows) {
+    const validation = validate(row.output);
+    if (validation.valid) return { row, output: validation.output };
+  }
+  return null;
+}
+
 // --- Stage 18.3: SEO manual diagnosis ---------------------------------------
 
 // Same 8-key shape as AiAnalysisResultDto, with seoCheckId in place of
@@ -165,11 +207,23 @@ async function loadOwnedSeoCheck(websiteId: string, checkId: string, userId: str
 async function executeManualSeoAnalysis(
   check: SeoCheck,
   predecessor: SeoCheck | null,
+  userId: string,
+  options: ManualAnalysisOptions,
   providerOverride?: AiProvider
-): Promise<SeoAiAnalysisResultDto> {
+): Promise<ManualAnalysisResult<SeoAiAnalysisResultDto>> {
   const input = buildSeoAiInput(check, predecessor);
   const inputFingerprint = computeSeoAiInputFingerprint(input);
   const provider = providerOverride ?? createAiProvider();
+  const target: AiAnalysisTarget = { source: "SEO", id: check.id };
+
+  // Stage 18.7: free reuse first, then the paid-run limits.
+  if (!options.force) {
+    const reusable = await findValidReusable(target, inputFingerprint, provider, validateDiagnosisAiOutput);
+    if (reusable) {
+      return { analysis: toSeoAiAnalysisResultDto(reusable.row, check.id, reusable.output), reused: true };
+    }
+  }
+  await enforceManualLimits(userId, target);
 
   try {
     const output = await provider.analyzeSeo(input);
@@ -183,7 +237,7 @@ async function executeManualSeoAnalysis(
       status: "SUCCEEDED",
     });
 
-    return toSeoAiAnalysisResultDto(created, check.id, output);
+    return { analysis: toSeoAiAnalysisResultDto(created, check.id, output), reused: false };
   } catch (error) {
     if (!(error instanceof AiProviderError)) throw error;
 
@@ -256,11 +310,28 @@ async function loadOwnedIncident(websiteId: string, incidentId: string, userId: 
 // FAILED/INVALID_RESPONSE with null output + curated 502 on provider error).
 async function executeManualIncidentAnalysis(
   incident: Incident,
+  userId: string,
+  options: ManualAnalysisOptions,
   providerOverride?: AiProvider
-): Promise<IncidentAiAnalysisResultDto> {
+): Promise<ManualAnalysisResult<IncidentAiAnalysisResultDto>> {
   const input = await loadIncidentAiInput(incident);
   const inputFingerprint = computeIncidentAiInputFingerprint(input);
   const provider = providerOverride ?? createAiProvider();
+  const target: AiAnalysisTarget = { source: "UPTIME", id: incident.id };
+
+  // Stage 18.7: free reuse first, then the paid-run limits. (An OPEN
+  // incident's fingerprint changes as checks arrive, so reuse mostly helps
+  // resolved incidents and repeated clicks.)
+  if (!options.force) {
+    const reusable = await findValidReusable(target, inputFingerprint, provider, validateDiagnosisAiOutput);
+    if (reusable) {
+      return {
+        analysis: toIncidentAiAnalysisResultDto(reusable.row, incident.id, reusable.output),
+        reused: true,
+      };
+    }
+  }
+  await enforceManualLimits(userId, target);
 
   try {
     const output = await provider.analyzeIncident(input);
@@ -274,7 +345,7 @@ async function executeManualIncidentAnalysis(
       status: "SUCCEEDED",
     });
 
-    return toIncidentAiAnalysisResultDto(created, incident.id, output);
+    return { analysis: toIncidentAiAnalysisResultDto(created, incident.id, output), reused: false };
   } catch (error) {
     if (!(error instanceof AiProviderError)) throw error;
 
@@ -312,8 +383,10 @@ async function executeManualIncidentAnalysis(
 async function executeManualAnalysis(
   check: PerformanceCheck,
   predecessor: PerformanceCheck | null,
+  userId: string,
+  options: ManualAnalysisOptions,
   providerOverride?: AiProvider
-): Promise<AiAnalysisResultDto> {
+): Promise<ManualAnalysisResult<AiAnalysisResultDto>> {
   const input = buildPerformanceAiInput(check, predecessor);
   const inputFingerprint = computePerformanceAiInputFingerprint(input);
   // Stage 16.5 §16: resolved via the SAME createAiProvider() boundary for
@@ -322,6 +395,17 @@ async function executeManualAnalysis(
   // mock-today-OpenAI-later requires no change to this file or to
   // performance/service.ts.
   const provider = providerOverride ?? createAiProvider();
+  const target: AiAnalysisTarget = { source: "PERFORMANCE", id: check.id };
+
+  // Stage 18.7: free reuse first (replaces the old "always call the provider"
+  // behavior when the facts are unchanged), then the paid-run limits.
+  if (!options.force) {
+    const reusable = await findValidReusable(target, inputFingerprint, provider, validatePerformanceAiOutput);
+    if (reusable) {
+      return { analysis: toAiAnalysisResultDto(reusable.row, check.id, reusable.output), reused: true };
+    }
+  }
+  await enforceManualLimits(userId, target);
 
   try {
     const output = await provider.analyzePerformance(input);
@@ -338,7 +422,7 @@ async function executeManualAnalysis(
     // Stage 18.1: the column is nullable now (SEO/Uptime rows); check.id is
     // the identical value for this Performance row and keeps the DTO a
     // non-null string, so the API response is unchanged.
-    return toAiAnalysisResultDto(created, check.id, output);
+    return { analysis: toAiAnalysisResultDto(created, check.id, output), reused: false };
   } catch (error) {
     if (!(error instanceof AiProviderError)) throw error;
 
@@ -379,6 +463,10 @@ async function executeAutomaticAnalysis(
   predecessor: PerformanceCheck | null,
   providerOverride?: AiProvider
 ): Promise<void> {
+  // Stage 18.7: the automatic on/off switch, checked BEFORE the claim so a
+  // disabled switch creates no row and makes no provider call at all.
+  if (!isAutomaticAiEnabled()) return;
+
   const input = buildPerformanceAiInput(check, predecessor);
   const inputFingerprint = computePerformanceAiInputFingerprint(input);
   const provider = providerOverride ?? createAiProvider();
@@ -431,8 +519,9 @@ export const aiAnalysisService = {
     websiteId: string,
     checkId: string,
     userId: string,
+    options: ManualAnalysisOptions = {},
     providerOverride?: AiProvider
-  ): Promise<AiAnalysisResultDto> => {
+  ): Promise<ManualAnalysisResult<AiAnalysisResultDto>> => {
     await verifyWebsiteOwnership(websiteId, userId);
 
     const check = await performanceRepository.findById(checkId);
@@ -447,7 +536,7 @@ export const aiAnalysisService = {
       { checkedAt: check.checkedAt, id: check.id }
     );
 
-    return executeManualAnalysis(check, predecessor, providerOverride);
+    return executeManualAnalysis(check, predecessor, userId, options, providerOverride);
   },
 
   // Stage 18.2: read-only GET-latest. Same ownership chain and the same 404
@@ -495,14 +584,15 @@ export const aiAnalysisService = {
     websiteId: string,
     checkId: string,
     userId: string,
+    options: ManualAnalysisOptions = {},
     providerOverride?: AiProvider
-  ): Promise<SeoAiAnalysisResultDto> => {
+  ): Promise<ManualAnalysisResult<SeoAiAnalysisResultDto>> => {
     const check = await loadOwnedSeoCheck(websiteId, checkId, userId);
     const predecessor = await seoRepository.findImmediatePredecessor(check.websiteId, check.pageUrl, {
       checkedAt: check.checkedAt,
       id: check.id,
     });
-    return executeManualSeoAnalysis(check, predecessor, providerOverride);
+    return executeManualSeoAnalysis(check, predecessor, userId, options, providerOverride);
   },
 
   // Stage 18.3: read-only SEO GET-latest -- same rules as
@@ -534,10 +624,11 @@ export const aiAnalysisService = {
     websiteId: string,
     incidentId: string,
     userId: string,
+    options: ManualAnalysisOptions = {},
     providerOverride?: AiProvider
-  ): Promise<IncidentAiAnalysisResultDto> => {
+  ): Promise<ManualAnalysisResult<IncidentAiAnalysisResultDto>> => {
     const incident = await loadOwnedIncident(websiteId, incidentId, userId);
-    return executeManualIncidentAnalysis(incident, providerOverride);
+    return executeManualIncidentAnalysis(incident, userId, options, providerOverride);
   },
 
   // Stage 18.5: read-only uptime GET-latest -- same rules as the SEO one.
