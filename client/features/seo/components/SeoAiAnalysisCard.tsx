@@ -9,83 +9,23 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { StatusBadge } from "@/components/shared/StatusBadge";
-import type { PerformanceAiFinding } from "@/features/performance/types";
-import {
-  CONFIDENCE_LABEL,
-  URGENCY_BADGE_STATUS,
-  URGENCY_LABEL,
-  formatAiTimestamp,
-} from "@/features/performance/utils";
+import { AiFindingCard } from "@/features/ai/components/AiFindingCard";
+import { AiLimitations } from "@/features/ai/components/AiLimitations";
+import { URGENCY_BADGE_STATUS, URGENCY_LABEL, formatAiTimestamp } from "@/features/ai/utils";
 import { useLatestSeoAiAnalysis, useRunSeoAiAnalysis } from "../hooks";
 
 // Stage 18.4: AI diagnosis of one stored SEO check -- mirrors
 // PerformanceAiAnalysisCard's behavior (Stage 16.4 / 18.2) exactly, plus a
 // "What we can't confirm" section for the diagnosis `limitations`.
-// Deliberately its own finding renderer (not a shared component yet) so the
-// Performance card stays untouched in this stage.
+// Stage 18.9: findings and limitations render through the shared
+// AiFindingCard / AiLimitations components (identical markup to the former
+// local copies). Plain React text throughout.
 
 interface SeoAiAnalysisCardProps {
   websiteId: string;
   // null = no SEO check exists yet for the selected page -- nothing a click
   // could target, so the button stays disabled.
   seoCheckId: string | null;
-}
-
-// Plain React text throughout -- never dangerouslySetInnerHTML, never parsed
-// as HTML/Markdown. AI output is untrusted display text regardless of
-// backend validation.
-function SeoFindingCard({ finding }: { finding: PerformanceAiFinding }) {
-  return (
-    <div className="flex flex-col gap-3 rounded-lg border border-border p-3">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <h4 className="text-sm font-medium break-words">{finding.title}</h4>
-        <StatusBadge
-          status={URGENCY_BADGE_STATUS[finding.severity]}
-          label={URGENCY_LABEL[finding.severity]}
-        />
-      </div>
-
-      <div className="flex flex-col gap-1">
-        <span className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-          Evidence
-        </span>
-        <ul className="flex flex-col gap-0.5 text-sm">
-          {finding.evidence.map((item, index) => (
-            <li key={index} className="break-words">
-              • {item}
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      <div className="flex flex-col gap-1">
-        {/* "Possible explanation", never "Root cause" -- this is INFERENCE,
-            not a confirmed diagnosis. */}
-        <span className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-          Possible explanation
-        </span>
-        <p className="text-sm break-words text-muted-foreground">{finding.explanation}</p>
-      </div>
-
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <span className="font-medium tracking-wide uppercase">Confidence</span>
-        <span>{CONFIDENCE_LABEL[finding.confidence]}</span>
-      </div>
-
-      <div className="flex flex-col gap-1">
-        <span className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-          Recommended actions
-        </span>
-        <ul className="flex flex-col gap-0.5 text-sm">
-          {finding.recommendations.map((item, index) => (
-            <li key={index} className="break-words">
-              • {item}
-            </li>
-          ))}
-        </ul>
-      </div>
-    </div>
-  );
 }
 
 export function SeoAiAnalysisCard({ websiteId, seoCheckId }: SeoAiAnalysisCardProps) {
@@ -191,25 +131,12 @@ export function SeoAiAnalysisCard({ websiteId, seoCheckId }: SeoAiAnalysisCardPr
             ) : (
               <div className="flex flex-col gap-3">
                 {output.findings.map((finding, index) => (
-                  <SeoFindingCard key={index} finding={finding} />
+                  <AiFindingCard key={index} finding={finding} />
                 ))}
               </div>
             )}
 
-            {output.limitations.length > 0 && (
-              <div className="flex flex-col gap-1">
-                <span className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                  What we can&apos;t confirm
-                </span>
-                <ul className="flex flex-col gap-0.5 text-sm text-muted-foreground">
-                  {output.limitations.map((item, index) => (
-                    <li key={index} className="break-words">
-                      • {item}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            <AiLimitations limitations={output.limitations} />
 
             <p className="text-xs text-muted-foreground">
               Provider: {resultForCurrent.provider} ·{" "}

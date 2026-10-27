@@ -2,13 +2,9 @@
 
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { Button } from "@/components/ui/button";
-import type { PerformanceAiFinding } from "@/features/performance/types";
-import {
-  CONFIDENCE_LABEL,
-  URGENCY_BADGE_STATUS,
-  URGENCY_LABEL,
-  formatAiTimestamp,
-} from "@/features/performance/utils";
+import { AiFindingCard } from "@/features/ai/components/AiFindingCard";
+import { AiLimitations } from "@/features/ai/components/AiLimitations";
+import { URGENCY_BADGE_STATUS, URGENCY_LABEL, formatAiTimestamp } from "@/features/ai/utils";
 import type { IncidentStatus } from "@/types";
 import { useLatestIncidentAiAnalysis, useRunIncidentAiAnalysis } from "../hooks";
 
@@ -16,69 +12,15 @@ import { useLatestIncidentAiAnalysis, useRunIncidentAiAnalysis } from "../hooks"
 // IncidentRow when the user opens it. Mirrors SeoAiAnalysisCard's behavior
 // (fresh-over-stored, identity-checked, success-only caching, no polling).
 // Mounted only while open, so the stored diagnosis is fetched on demand,
-// never once per incident on page load. Deliberately its own finding
-// renderer for now -- all three AI finding layouts are consolidated in a
-// later stage.
+// never once per incident on page load.
+// Stage 18.9: findings and limitations render through the shared
+// AiFindingCard / AiLimitations components (identical markup to the former
+// local copies). Plain React text throughout.
 
 interface IncidentAiPanelProps {
   websiteId: string;
   incidentId: string;
   incidentStatus: IncidentStatus;
-}
-
-// Plain React text throughout -- never dangerouslySetInnerHTML. AI output
-// is untrusted display text regardless of backend validation.
-function IncidentFindingCard({ finding }: { finding: PerformanceAiFinding }) {
-  return (
-    <div className="flex flex-col gap-3 rounded-lg border border-border p-3">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <h4 className="text-sm font-medium break-words">{finding.title}</h4>
-        <StatusBadge
-          status={URGENCY_BADGE_STATUS[finding.severity]}
-          label={URGENCY_LABEL[finding.severity]}
-        />
-      </div>
-
-      <div className="flex flex-col gap-1">
-        <span className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-          Evidence
-        </span>
-        <ul className="flex flex-col gap-0.5 text-sm">
-          {finding.evidence.map((item, index) => (
-            <li key={index} className="break-words">
-              • {item}
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      <div className="flex flex-col gap-1">
-        {/* "Possible explanation", never "Root cause" -- INFERENCE only. */}
-        <span className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-          Possible explanation
-        </span>
-        <p className="text-sm break-words text-muted-foreground">{finding.explanation}</p>
-      </div>
-
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <span className="font-medium tracking-wide uppercase">Confidence</span>
-        <span>{CONFIDENCE_LABEL[finding.confidence]}</span>
-      </div>
-
-      <div className="flex flex-col gap-1">
-        <span className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-          Recommended actions
-        </span>
-        <ul className="flex flex-col gap-0.5 text-sm">
-          {finding.recommendations.map((item, index) => (
-            <li key={index} className="break-words">
-              • {item}
-            </li>
-          ))}
-        </ul>
-      </div>
-    </div>
-  );
 }
 
 export function IncidentAiPanel({ websiteId, incidentId, incidentStatus }: IncidentAiPanelProps) {
@@ -174,25 +116,12 @@ export function IncidentAiPanel({ websiteId, incidentId, incidentStatus }: Incid
           ) : (
             <div className="flex flex-col gap-3">
               {output.findings.map((finding, index) => (
-                <IncidentFindingCard key={index} finding={finding} />
+                <AiFindingCard key={index} finding={finding} />
               ))}
             </div>
           )}
 
-          {output.limitations.length > 0 && (
-            <div className="flex flex-col gap-1">
-              <span className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                What we can&apos;t confirm
-              </span>
-              <ul className="flex flex-col gap-0.5 text-sm text-muted-foreground">
-                {output.limitations.map((item, index) => (
-                  <li key={index} className="break-words">
-                    • {item}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+          <AiLimitations limitations={output.limitations} />
 
           <p className="text-xs text-muted-foreground">
             Provider: {resultForCurrent.provider} · {formatAiTimestamp(resultForCurrent.createdAt)}

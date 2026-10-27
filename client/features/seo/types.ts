@@ -1,8 +1,4 @@
-import type {
-  AiAnalysisStatus,
-  AiUrgency,
-  PerformanceAiFinding,
-} from "@/features/performance/types";
+import type { AiAnalysisStatus, AiFinding, AiUrgency } from "@/features/ai/types";
 
 export type SeoIssueSeverity = "ERROR" | "WARNING" | "INFO";
 
@@ -158,7 +154,7 @@ export interface SeoCheckResult {
 export interface SeoAiOutput {
   summary: string;
   priority: AiUrgency;
-  findings: PerformanceAiFinding[];
+  findings: AiFinding[];
   limitations: string[];
 }
 

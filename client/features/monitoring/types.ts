@@ -1,8 +1,4 @@
-import type {
-  AiAnalysisStatus,
-  AiUrgency,
-  PerformanceAiFinding,
-} from "@/features/performance/types";
+import type { AiAnalysisStatus, AiFinding, AiUrgency } from "@/features/ai/types";
 import type { Incident, MonitoringCheck } from "@/types";
 
 export interface LatestCheckResult {
@@ -37,7 +33,7 @@ export interface IncidentsResult {
 export interface IncidentAiOutput {
   summary: string;
   priority: AiUrgency;
-  findings: PerformanceAiFinding[];
+  findings: AiFinding[];
   limitations: string[];
 }
 

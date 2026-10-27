@@ -109,18 +109,11 @@ export interface PerformanceLatestResult {
 // field-for-field; `inputFingerprint` is deliberately omitted here since
 // nothing in this UI needs to display it.
 
-export type AiAnalysisStatus = "SUCCEEDED" | "FAILED" | "INVALID_RESPONSE";
-export type AiUrgency = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
-export type AiConfidence = "LOW" | "MEDIUM" | "HIGH";
-
-export interface PerformanceAiFinding {
-  title: string;
-  severity: AiUrgency;
-  evidence: string[];
-  explanation: string;
-  confidence: AiConfidence;
-  recommendations: string[];
-}
+// Stage 18.9: the shared AI types now live in features/ai/types.ts; these
+// re-exports keep every existing import from this file working unchanged.
+import type { AiAnalysisStatus, AiFinding, AiUrgency } from "@/features/ai/types";
+export type { AiAnalysisStatus, AiConfidence, AiUrgency } from "@/features/ai/types";
+export type PerformanceAiFinding = AiFinding;
 
 export interface PerformanceAiOutput {
   summary: string;
