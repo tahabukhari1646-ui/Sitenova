@@ -4,7 +4,12 @@ import { StatusBadge } from "@/components/shared/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { AiFindingCard } from "@/features/ai/components/AiFindingCard";
 import { AiLimitations } from "@/features/ai/components/AiLimitations";
-import { URGENCY_BADGE_STATUS, URGENCY_LABEL, formatAiTimestamp } from "@/features/ai/utils";
+import {
+  AI_AUTOMATIC_LABEL,
+  URGENCY_BADGE_STATUS,
+  URGENCY_LABEL,
+  formatAiTimestamp,
+} from "@/features/ai/utils";
 import type { IncidentStatus } from "@/types";
 import { useLatestIncidentAiAnalysis, useRunIncidentAiAnalysis } from "../hooks";
 
@@ -125,6 +130,7 @@ export function IncidentAiPanel({ websiteId, incidentId, incidentStatus }: Incid
 
           <p className="text-xs text-muted-foreground">
             Provider: {resultForCurrent.provider} · {formatAiTimestamp(resultForCurrent.createdAt)}
+            {resultForCurrent.trigger === "AUTOMATIC" && ` · ${AI_AUTOMATIC_LABEL}`}
           </p>
         </div>
       )}

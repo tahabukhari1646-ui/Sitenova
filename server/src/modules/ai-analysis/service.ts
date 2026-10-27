@@ -19,7 +19,7 @@ import { AppError, NotFoundError } from "../../errors/AppError";
 import type { AiProvider } from "../../integrations/ai/provider";
 import type { AiAnalysisStatus } from "./types";
 import type { DiagnosisAiOutput, PerformanceAiOutput } from "./types";
-import type { Incident, PerformanceCheck, SeoCheck } from "../../generated/prisma/client";
+import type { AiAnalysisTrigger, Incident, PerformanceCheck, SeoCheck } from "../../generated/prisma/client";
 
 // Mirrors every other module's own private verifyOwnership exactly (see
 // performance/service.ts, seo/service.ts) -- deliberately duplicated, not
@@ -72,6 +72,8 @@ export interface AiAnalysisResultDto {
   inputFingerprint: string;
   output: PerformanceAiOutput | null;
   createdAt: Date;
+  // Stage 18.9: "MANUAL" (a user's click) or "AUTOMATIC" (the scheduler).
+  trigger: AiAnalysisTrigger;
 }
 
 // Stage 18.2: the ONE place an AiAnalysisResultDto is shaped -- used by both
@@ -87,6 +89,7 @@ function toAiAnalysisResultDto(
     status: AiAnalysisStatus;
     inputFingerprint: string;
     createdAt: Date;
+    trigger: AiAnalysisTrigger;
   },
   performanceCheckId: string,
   output: PerformanceAiOutput | null
@@ -100,6 +103,9 @@ function toAiAnalysisResultDto(
     inputFingerprint: row.inputFingerprint,
     output,
     createdAt: row.createdAt,
+    // Stage 18.9: who created this analysis -- appended LAST so the
+    // original 8 keys keep their order; additive, non-breaking.
+    trigger: row.trigger,
   };
 }
 
@@ -160,6 +166,8 @@ export interface SeoAiAnalysisResultDto {
   inputFingerprint: string;
   output: DiagnosisAiOutput | null;
   createdAt: Date;
+  // Stage 18.9: "MANUAL" (a user's click) or "AUTOMATIC" (the scheduler).
+  trigger: AiAnalysisTrigger;
 }
 
 // The ONE place an SeoAiAnalysisResultDto is shaped (POST + GET), so the two
@@ -172,6 +180,7 @@ function toSeoAiAnalysisResultDto(
     status: AiAnalysisStatus;
     inputFingerprint: string;
     createdAt: Date;
+    trigger: AiAnalysisTrigger;
   },
   seoCheckId: string,
   output: DiagnosisAiOutput | null
@@ -185,6 +194,9 @@ function toSeoAiAnalysisResultDto(
     inputFingerprint: row.inputFingerprint,
     output,
     createdAt: row.createdAt,
+    // Stage 18.9: who created this analysis -- appended LAST so the
+    // original 8 keys keep their order; additive, non-breaking.
+    trigger: row.trigger,
   };
 }
 
@@ -266,6 +278,8 @@ export interface IncidentAiAnalysisResultDto {
   inputFingerprint: string;
   output: DiagnosisAiOutput | null;
   createdAt: Date;
+  // Stage 18.9: "MANUAL" (a user's click) or "AUTOMATIC" (the scheduler).
+  trigger: AiAnalysisTrigger;
 }
 
 // The ONE place an IncidentAiAnalysisResultDto is shaped (POST + GET).
@@ -278,6 +292,7 @@ function toIncidentAiAnalysisResultDto(
     status: AiAnalysisStatus;
     inputFingerprint: string;
     createdAt: Date;
+    trigger: AiAnalysisTrigger;
   },
   incidentId: string,
   output: DiagnosisAiOutput | null
@@ -291,6 +306,9 @@ function toIncidentAiAnalysisResultDto(
     inputFingerprint: row.inputFingerprint,
     output,
     createdAt: row.createdAt,
+    // Stage 18.9: who created this analysis -- appended LAST so the
+    // original 8 keys keep their order; additive, non-breaking.
+    trigger: row.trigger,
   };
 }
 

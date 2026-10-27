@@ -40,3 +40,8 @@ export const CONFIDENCE_LABEL: Record<AiConfidence, string> = {
 export function formatAiTimestamp(iso: string): string {
   return new Date(iso).toLocaleString();
 }
+
+// Stage 18.9: shown after the provider/timestamp line for analyses the
+// scheduler created, so they are distinguishable from a user's own click.
+// One shared wording for all three AI views.
+export const AI_AUTOMATIC_LABEL = "Ran automatically";

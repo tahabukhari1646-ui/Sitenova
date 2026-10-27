@@ -11,7 +11,12 @@ import {
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { AiFindingCard } from "@/features/ai/components/AiFindingCard";
 import { AiLimitations } from "@/features/ai/components/AiLimitations";
-import { URGENCY_BADGE_STATUS, URGENCY_LABEL, formatAiTimestamp } from "@/features/ai/utils";
+import {
+  AI_AUTOMATIC_LABEL,
+  URGENCY_BADGE_STATUS,
+  URGENCY_LABEL,
+  formatAiTimestamp,
+} from "@/features/ai/utils";
 import { useLatestSeoAiAnalysis, useRunSeoAiAnalysis } from "../hooks";
 
 // Stage 18.4: AI diagnosis of one stored SEO check -- mirrors
@@ -141,6 +146,7 @@ export function SeoAiAnalysisCard({ websiteId, seoCheckId }: SeoAiAnalysisCardPr
             <p className="text-xs text-muted-foreground">
               Provider: {resultForCurrent.provider} ·{" "}
               {formatAiTimestamp(resultForCurrent.createdAt)}
+              {resultForCurrent.trigger === "AUTOMATIC" && ` · ${AI_AUTOMATIC_LABEL}`}
             </p>
           </div>
         )}

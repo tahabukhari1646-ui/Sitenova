@@ -1,4 +1,4 @@
-import type { AiAnalysisStatus, AiFinding, AiUrgency } from "@/features/ai/types";
+import type { AiAnalysisStatus, AiAnalysisTrigger, AiFinding, AiUrgency } from "@/features/ai/types";
 import type { Incident, MonitoringCheck } from "@/types";
 
 export interface LatestCheckResult {
@@ -45,6 +45,9 @@ export interface IncidentAiAnalysis {
   status: AiAnalysisStatus;
   output: IncidentAiOutput | null;
   createdAt: string;
+  // Stage 18.9: who created it -- a user's click (uptime AI is manual-only
+  // in V1, so this is always "MANUAL" today).
+  trigger: AiAnalysisTrigger;
 }
 
 export interface IncidentAiAnalysisResult {

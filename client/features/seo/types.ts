@@ -1,4 +1,4 @@
-import type { AiAnalysisStatus, AiFinding, AiUrgency } from "@/features/ai/types";
+import type { AiAnalysisStatus, AiAnalysisTrigger, AiFinding, AiUrgency } from "@/features/ai/types";
 
 export type SeoIssueSeverity = "ERROR" | "WARNING" | "INFO";
 
@@ -166,6 +166,8 @@ export interface SeoAiAnalysis {
   status: AiAnalysisStatus;
   output: SeoAiOutput | null;
   createdAt: string;
+  // Stage 18.9: who created it -- a user's click or the scheduler.
+  trigger: AiAnalysisTrigger;
 }
 
 export interface SeoAiAnalysisResult {

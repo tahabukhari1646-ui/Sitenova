@@ -5,6 +5,8 @@
 // RECOMMENDATION finding shape (server/src/modules/ai-analysis/types.ts).
 
 export type AiAnalysisStatus = "SUCCEEDED" | "FAILED" | "INVALID_RESPONSE";
+// Stage 18.9: who created an analysis -- a user's click or the scheduler.
+export type AiAnalysisTrigger = "MANUAL" | "AUTOMATIC";
 export type AiUrgency = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 export type AiConfidence = "LOW" | "MEDIUM" | "HIGH";
 

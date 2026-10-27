@@ -111,8 +111,8 @@ export interface PerformanceLatestResult {
 
 // Stage 18.9: the shared AI types now live in features/ai/types.ts; these
 // re-exports keep every existing import from this file working unchanged.
-import type { AiAnalysisStatus, AiFinding, AiUrgency } from "@/features/ai/types";
-export type { AiAnalysisStatus, AiConfidence, AiUrgency } from "@/features/ai/types";
+import type { AiAnalysisStatus, AiAnalysisTrigger, AiFinding, AiUrgency } from "@/features/ai/types";
+export type { AiAnalysisStatus, AiAnalysisTrigger, AiConfidence, AiUrgency } from "@/features/ai/types";
 export type PerformanceAiFinding = AiFinding;
 
 export interface PerformanceAiOutput {
@@ -129,6 +129,8 @@ export interface PerformanceAiAnalysis {
   status: AiAnalysisStatus;
   output: PerformanceAiOutput | null;
   createdAt: string;
+  // Stage 18.9: who created it -- a user's click or the scheduler.
+  trigger: AiAnalysisTrigger;
 }
 
 export interface PerformanceAiAnalysisResult {
