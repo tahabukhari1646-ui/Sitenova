@@ -498,6 +498,74 @@ async function executeAutomaticAnalysis(
   }
 }
 
+// --- Stage 18.8: automatic SEO diagnosis --------------------------------------
+
+export type AutomaticSeoAnalysisOutcome =
+  | "DISABLED"
+  | "NOT_TRIGGERED"
+  | "ALREADY_CLAIMED"
+  | "SUCCEEDED"
+  | "FAILED";
+
+// The trigger rule: at least one NEWLY appeared issue (vs the previous check
+// of the SAME page) has severity ERROR. WARNING/INFO never trigger. A page's
+// first check (baseline, changes === null) never triggers -- nothing is
+// "new" without a predecessor.
+function hasNewErrorIssue(input: ReturnType<typeof buildSeoAiInput>): boolean {
+  if (input.changes === null) return false;
+  const errorCodes = new Set(input.issues.filter((i) => i.severity === "ERROR").map((i) => i.code));
+  return input.changes.newIssueCodes.some((code) => errorCodes.has(code));
+}
+
+// Mirrors executeAutomaticAnalysis (Performance): switch first, then the
+// trigger rule (pure, no writes), then claim-before-call on the SEO partial
+// unique index, then exactly one provider call and one finalize. Never
+// retries. Provider failures are recorded on the claimed row (null output)
+// and reported as "FAILED" -- never thrown -- so the SEO scheduler is never
+// affected. Any OTHER error propagates to the caller's try/catch (a claimed
+// row may then stay PENDING: the same accepted V1 limitation as Performance).
+async function executeAutomaticSeoAnalysis(
+  check: SeoCheck,
+  providerOverride?: AiProvider
+): Promise<AutomaticSeoAnalysisOutcome> {
+  if (!isAutomaticAiEnabled()) return "DISABLED";
+
+  const predecessor = await seoRepository.findImmediatePredecessor(check.websiteId, check.pageUrl, {
+    checkedAt: check.checkedAt,
+    id: check.id,
+  });
+  const input = buildSeoAiInput(check, predecessor);
+  if (!hasNewErrorIssue(input)) return "NOT_TRIGGERED";
+
+  const inputFingerprint = computeSeoAiInputFingerprint(input);
+  const provider = providerOverride ?? createAiProvider();
+
+  const claim = await aiAnalysisRepository.claimAutomaticSeoAnalysis({
+    seoCheckId: check.id,
+    provider: provider.name,
+    model: provider.model,
+    inputFingerprint,
+  });
+  if (!claim.claimed) return "ALREADY_CLAIMED";
+
+  try {
+    const output = await provider.analyzeSeo(input);
+    await aiAnalysisRepository.finalizeAutomaticAnalysis(claim.analysis.id, { status: "SUCCEEDED", output });
+    return "SUCCEEDED";
+  } catch (error) {
+    if (!(error instanceof AiProviderError)) throw error;
+
+    await aiAnalysisRepository.finalizeAutomaticAnalysis(claim.analysis.id, {
+      status: statusForProviderError(error),
+      output: null,
+    });
+    console.error(
+      `Automatic SEO AI analysis failed for SEO check ${check.id}: ${PROVIDER_ERROR_MESSAGES[error.code]}`
+    );
+    return "FAILED";
+  }
+}
+
 export const aiAnalysisService = {
   // Stage 16.3's manual, HTTP-authorized entry point. Ownership chain
   // enforced server-side only, in order: website (via :id + userId,
@@ -678,5 +746,17 @@ export const aiAnalysisService = {
     providerOverride?: AiProvider
   ): Promise<void> => {
     return executeAutomaticAnalysis(check, predecessor, providerOverride);
+  },
+
+  // Stage 18.8: trusted INTERNAL entry point for the SEO scheduler only
+  // (seo/worker.ts, after a successful SCHEDULED check -- never a manual
+  // "Run SEO check"). Takes NO userId and performs NO ownership check: the
+  // check row comes straight from the scheduler's own trusted pipeline, and
+  // there is no HTTP route to this function.
+  analyzeSeoCheckAutomatically: async (
+    check: SeoCheck,
+    providerOverride?: AiProvider
+  ): Promise<AutomaticSeoAnalysisOutcome> => {
+    return executeAutomaticSeoAnalysis(check, providerOverride);
   },
 };

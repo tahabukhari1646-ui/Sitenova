@@ -81,9 +81,19 @@ export type ClaimAutomaticAnalysisResult =
   // it only needs to know it lost the race and must not call the provider.
   | { claimed: false };
 
+// Stage 18.8: the SEO equivalent of ClaimAutomaticAnalysisInput.
+export interface ClaimAutomaticSeoAnalysisInput {
+  seoCheckId: string;
+  provider: string;
+  model: string;
+  inputFingerprint: string;
+}
+
 export interface FinalizeAutomaticAnalysisInput {
   status: "SUCCEEDED" | "FAILED" | "INVALID_RESPONSE";
-  output: PerformanceAiOutput | null;
+  // Stage 18.8: widened -- the same finalize step resolves both Performance
+  // (PerformanceAiOutput) and SEO (DiagnosisAiOutput) automatic claims.
+  output: PerformanceAiOutput | DiagnosisAiOutput | null;
 }
 
 // Stage 16.3: only what this stage actually needs -- no history/pagination
@@ -147,9 +157,40 @@ export const aiAnalysisRepository = {
     }
   },
 
+  // Stage 18.8: the SEO claim -- identical discipline to
+  // claimAutomaticAnalysis above, relying on the migration-22 partial unique
+  // index `ai_analyses_seo_automatic_unique` (seoCheckId WHERE trigger =
+  // 'AUTOMATIC'). At most ONE automatic attempt per SeoCheck, ever (no retry
+  // even after FAILED); a P2002 is reported as `{ claimed: false }`.
+  claimAutomaticSeoAnalysis: async (
+    data: ClaimAutomaticSeoAnalysisInput
+  ): Promise<ClaimAutomaticAnalysisResult> => {
+    try {
+      const analysis = await prisma.aiAnalysis.create({
+        data: {
+          source: "SEO",
+          seoCheckId: data.seoCheckId,
+          provider: data.provider,
+          model: data.model,
+          inputFingerprint: data.inputFingerprint,
+          trigger: "AUTOMATIC",
+          status: "PENDING",
+          output: Prisma.DbNull,
+        },
+      });
+      return { claimed: true, analysis };
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        return { claimed: false };
+      }
+      throw error;
+    }
+  },
+
   // Stage 16.6: updates the SAME row claimAutomaticAnalysis already
   // created -- never a second insert. This is the only way a PENDING
   // AUTOMATIC row is ever resolved; nothing else writes to it.
+  // Stage 18.8: also resolves claimAutomaticSeoAnalysis rows.
   finalizeAutomaticAnalysis: (id: string, data: FinalizeAutomaticAnalysisInput) => {
     return prisma.aiAnalysis.update({
       where: { id },

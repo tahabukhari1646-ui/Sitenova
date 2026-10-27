@@ -1,5 +1,6 @@
 import { seoRepository } from "./repository";
 import { seoService } from "./service";
+import { aiAnalysisService } from "../ai-analysis/service";
 import { isSeoCheckDue } from "./due";
 import { safeCanonicalize } from "../../utils/pageUrl";
 
@@ -71,8 +72,23 @@ export async function runSeoCycle(): Promise<void> {
 
       dueCount++;
       try {
-        await seoService.runAutomaticSeoCheck(website);
+        const created = await seoService.runAutomaticSeoCheck(website);
         successCount++;
+
+        // Stage 18.8: optional AI enrichment AFTER the check, its issues and
+        // its alerts are already saved -- monitoring is authoritative, AI
+        // never decides whether a check/alert exists. Called here (the
+        // scheduler only, never a manual "Run SEO check"), and isolated in
+        // its own try/catch so an AI problem can never fail this check or
+        // abort the cycle. Logged by id only.
+        try {
+          await aiAnalysisService.analyzeSeoCheckAutomatically(created);
+        } catch (aiError) {
+          console.error(
+            `Automatic SEO AI analysis errored for website ${website.id}, SEO check ${created.id}:`,
+            aiError instanceof Error ? aiError.message : "Unknown error"
+          );
+        }
       } catch (error) {
         failureCount++;
         // Only the curated error message is logged (never a raw stack
