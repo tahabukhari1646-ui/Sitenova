@@ -2,7 +2,7 @@ import { monitorRepository } from "./repository";
 import { websiteRepository } from "../website/repository";
 import { AlertFilters, CheckResult, HistoryRange, IncidentStatus } from "./types";
 import { NotFoundError } from "../../errors/AppError";
-import { deriveMonitoringStatus } from "./status";
+import { deriveMonitoringStatus, isUpStatusCode } from "./status";
 import { safeFetch, SafeFetchError, type SafeFetchErrorCode } from "../../utils/safeFetch";
 
 // Stage 18.5: exported (value unchanged) so the uptime AI input reports the
@@ -42,7 +42,8 @@ export const monitorService = {
   // fetch() -- private/internal destinations, non-http(s) URLs and URLs with
   // credentials are refused before any connection, every redirect is
   // re-checked, and the resolved address is validated at connect time.
-  // Headers only (discardBody); "any HTTP answer counts as up" is unchanged.
+  // Headers only (discardBody). Stage 20.2: a 5xx answer is a failed check
+  // (see isUpStatusCode); its status code is still recorded.
   checkWebsite: async (websiteId: string, url: string): Promise<CheckResult> => {
     const startedAt = Date.now();
 
@@ -51,7 +52,7 @@ export const monitorService = {
 
       return {
         websiteId,
-        success: true,
+        success: isUpStatusCode(response.statusCode),
         statusCode: response.statusCode,
         responseTimeMs: Date.now() - startedAt,
       };

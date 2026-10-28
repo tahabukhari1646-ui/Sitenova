@@ -27,11 +27,12 @@ export function computeIncidentAiInputFingerprint(input: IncidentAiInput): strin
       degradedThresholdMs: input.monitoring.degradedThresholdMs,
       vantagePoints: input.monitoring.vantagePoints,
       failureReasonRecorded: input.monitoring.failureReasonRecorded,
-      httpErrorsCountAsUp: input.monitoring.httpErrorsCountAsUp,
+      serverErrorsCountAsDown: input.monitoring.serverErrorsCountAsDown,
     },
     window: {
       totalChecks: input.window.totalChecks,
       failedChecks: input.window.failedChecks,
+      serverErrorFailures: input.window.serverErrorFailures,
       timeoutFailures: input.window.timeoutFailures,
       fastFailures: input.window.fastFailures,
       failedResponseTimeMs: input.window.failedResponseTimeMs

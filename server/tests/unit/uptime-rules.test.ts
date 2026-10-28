@@ -6,6 +6,7 @@ import {
   DEGRADED_RESPONSE_TIME_MS,
   FAILURE_CONFIRMATION_THRESHOLD,
   deriveMonitoringStatus,
+  isUpStatusCode,
 } from "../../src/modules/monitor/status";
 import { decideIncidentAction } from "../../src/modules/monitor/incidents";
 import { decideAlertAction } from "../../src/modules/monitor/alerts";
@@ -33,6 +34,16 @@ describe("deriveMonitoringStatus", () => {
     assert.equal(deriveMonitoringStatus({ latestCheck: failed, consecutiveFailures: 1 }), "UNKNOWN");
     assert.equal(deriveMonitoringStatus({ latestCheck: failed, consecutiveFailures: 2 }), "DOWN");
     assert.equal(deriveMonitoringStatus({ latestCheck: failed, consecutiveFailures: 9 }), "DOWN");
+  });
+});
+
+describe("isUpStatusCode", () => {
+  it("counts 2xx, 3xx and 4xx as up", () => {
+    for (const code of [200, 204, 301, 302, 399, 400, 401, 403, 404, 429, 499]) assert.equal(isUpStatusCode(code), true, String(code));
+  });
+
+  it("counts every 5xx server error as down", () => {
+    for (const code of [500, 502, 503, 504, 599]) assert.equal(isUpStatusCode(code), false, String(code));
   });
 });
 

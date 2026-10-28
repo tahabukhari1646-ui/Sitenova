@@ -276,8 +276,9 @@ export class MockAiProvider implements AiProvider {
 
   // Stage 18.5: deterministic uptime incident diagnosis -- a pure function
   // of IncidentAiInput. Evidence restates only supplied counts/durations
-  // (FACT); explanations are hedged and keyed ONLY on the timing split
-  // (timeouts vs fast failures), never a stated root cause (INFERENCE).
+  // (FACT); explanations are hedged and keyed ONLY on how checks failed
+  // (server errors vs timeouts vs fast failures), never a stated root
+  // cause (INFERENCE).
   // Limitations always state what monitoring cannot know.
   async analyzeIncident(input: IncidentAiInput): Promise<DiagnosisAiOutput> {
     const { incident, window: w, history } = input;
@@ -286,20 +287,31 @@ export class MockAiProvider implements AiProvider {
 
     const evidence = [
       `${w.failedChecks} of ${w.totalChecks} checks in the incident window failed.`,
+      `${w.serverErrorFailures} failure(s) were HTTP 5xx server error responses.`,
       `${w.timeoutFailures} failure(s) reached the ${input.monitoring.requestTimeoutMs} ms request timeout; ${w.fastFailures} failed faster than that.`,
       open
         ? `The incident is still open (started ${incident.startedAt}).`
         : `The incident lasted about ${minutes} minute(s) (from ${incident.startedAt} to ${incident.resolvedAt}).`,
     ];
 
+    const noAnswer = w.timeoutFailures + w.fastFailures;
+    const mostlyServerErrors = w.serverErrorFailures > noAnswer;
     const mostlyTimeouts = w.timeoutFailures > w.fastFailures;
-    const explanation = mostlyTimeouts
+    const explanation = mostlyServerErrors
+      ? "Most failed checks received an HTTP 5xx response, so the server was reachable but answered with an error. This may indicate an application crash, a failing backend or database, or an overloaded server. What caused the error inside the server is not known."
+      : mostlyTimeouts
       ? "Most failed checks waited until the request timeout. This may indicate an overloaded or unresponsive server, or a network path problem between the monitor and the site. The exact reason was not recorded."
       : "Most failed checks failed quickly, before the request timeout. This may indicate a DNS, connection-refused, or TLS/certificate problem. The exact reason was not recorded.";
 
     const findings: DiagnosisAiFinding[] = [
       {
-        title: open ? "Website is currently unreachable" : "Website was unreachable",
+        title: mostlyServerErrors
+          ? open
+            ? "Website is returning server errors"
+            : "Website returned server errors"
+          : open
+            ? "Website is currently unreachable"
+            : "Website was unreachable",
         severity: open ? "CRITICAL" : "HIGH",
         evidence,
         explanation,
@@ -327,14 +339,14 @@ export class MockAiProvider implements AiProvider {
 
     return {
       summary: open
-        ? `The website has been unreachable since ${incident.startedAt}; ${w.failedChecks} checks have failed so far.`
-        : `The website was unreachable for about ${minutes} minute(s) and has since recovered.`,
+        ? `The website has been down since ${incident.startedAt}; ${w.failedChecks} checks have failed so far.`
+        : `The website was down for about ${minutes} minute(s) and has since recovered.`,
       priority: open ? "CRITICAL" : "HIGH",
       findings,
       limitations: [
-        "The failure reason (timeout, DNS, connection, TLS) is not recorded by monitoring.",
+        "For failures without a response, the reason (timeout, DNS, connection, TLS) is not recorded by monitoring.",
         "Checks run from a single location, so a network-path issue cannot be ruled out.",
-        "HTTP 5xx responses are counted as 'up', so server errors may not appear as downtime.",
+        "For HTTP 5xx responses, only the status code is known, not the error inside the server.",
         "No server logs were available.",
       ],
     };

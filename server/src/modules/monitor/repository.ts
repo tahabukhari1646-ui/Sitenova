@@ -197,13 +197,16 @@ export const monitorRepository = {
     return prisma.incident.findUnique({ where: { id } });
   },
 
-  // Failure/timing aggregates for checks in [from, to). `timeoutCeilingMs`
-  // splits failures into "hit the request timeout" vs "failed quickly".
+  // Failure/timing aggregates for checks in [from, to). Failures with a
+  // status code are server errors (5xx, Stage 20.2); the rest got no answer
+  // and `timeoutCeilingMs` splits them into "hit the request timeout" vs
+  // "failed quickly".
   getIncidentWindowStats: async (websiteId: string, from: Date, to: Date, timeoutCeilingMs: number) => {
     const rows = await prisma.$queryRaw<
       {
         total: number;
         failed: number;
+        server_errors: number;
         timeouts: number;
         fast: number;
         min_rt: number | null;
@@ -215,8 +218,9 @@ export const monitorRepository = {
       SELECT
         count(*)::int AS total,
         count(*) FILTER (WHERE NOT success)::int AS failed,
-        count(*) FILTER (WHERE NOT success AND "responseTimeMs" >= ${timeoutCeilingMs})::int AS timeouts,
-        count(*) FILTER (WHERE NOT success AND "responseTimeMs" >= 0 AND "responseTimeMs" < ${timeoutCeilingMs})::int AS fast,
+        count(*) FILTER (WHERE NOT success AND "statusCode" IS NOT NULL)::int AS server_errors,
+        count(*) FILTER (WHERE NOT success AND "statusCode" IS NULL AND "responseTimeMs" >= ${timeoutCeilingMs})::int AS timeouts,
+        count(*) FILTER (WHERE NOT success AND "statusCode" IS NULL AND "responseTimeMs" >= 0 AND "responseTimeMs" < ${timeoutCeilingMs})::int AS fast,
         min("responseTimeMs") FILTER (WHERE NOT success AND "responseTimeMs" >= 0)::int AS min_rt,
         (percentile_cont(0.5) WITHIN GROUP (ORDER BY "responseTimeMs") FILTER (WHERE NOT success AND "responseTimeMs" >= 0))::int AS median_rt,
         max("responseTimeMs") FILTER (WHERE NOT success AND "responseTimeMs" >= 0)::int AS max_rt,

@@ -96,15 +96,60 @@ describe("uptime monitoring", () => {
     assert.equal(state.emails, 2);
   });
 
-  it("CURRENT BEHAVIOUR (planned change): a 500 server error counts as UP", async () => {
-    // If uptime is changed to treat 5xx as down, update this test on purpose.
+  // Stage 20.2: a 5xx answer means the server is failing -> counts as DOWN.
+  it("a 500 server error is a failed check, and its status code is recorded", async () => {
     const websiteId = (await createWebsite(userId, { url: site.url })).id;
     site.respondWith(500);
     try {
       const saved = await check(websiteId, site.url);
-      assert.equal(saved.success, true);
+      assert.equal(saved.success, false);
       assert.equal(saved.statusCode, 500);
-      assert.equal((await snapshot(websiteId)).website.consecutiveFailures, 0);
+      assert.equal((await snapshot(websiteId)).website.consecutiveFailures, 1);
+    } finally {
+      site.respondWith(200);
+    }
+  });
+
+  it("server errors open an incident + alert, and a 200 resolves it", async () => {
+    const websiteId = (await createWebsite(userId, { url: site.url })).id;
+    try {
+      site.respondWith(503);
+      await check(websiteId, site.url);
+      site.respondWith(502);
+      await check(websiteId, site.url);
+      let state = await snapshot(websiteId);
+      assert.equal(state.incidents.length, 1);
+      assert.equal(state.incidents[0].status, "OPEN");
+      assert.deepEqual(state.alerts.map((a) => a.type), ["INCIDENT_OPENED"]);
+      assert.equal(state.notifications, 1);
+      assert.equal(state.emails, 1);
+      const latest = await api.request("GET", `/websites/${websiteId}/latest`, { token });
+      assert.equal(latest.json.status, "DOWN");
+      assert.equal(latest.json.check.statusCode, 502);
+
+      site.respondWith(200);
+      await check(websiteId, site.url);
+      state = await snapshot(websiteId);
+      assert.equal(state.incidents[0].status, "RESOLVED");
+      assert.deepEqual(state.alerts.map((a) => a.type), ["INCIDENT_OPENED", "INCIDENT_RESOLVED"]);
+    } finally {
+      site.respondWith(200);
+    }
+  });
+
+  it("4xx answers (404, 401, 403, 429) still count as UP -- no incident", async () => {
+    const websiteId = (await createWebsite(userId, { url: site.url })).id;
+    try {
+      for (const code of [404, 401, 403, 429]) {
+        site.respondWith(code);
+        const saved = await check(websiteId, site.url);
+        assert.equal(saved.success, true, String(code));
+        assert.equal(saved.statusCode, code);
+      }
+      const state = await snapshot(websiteId);
+      assert.equal(state.website.consecutiveFailures, 0);
+      assert.equal(state.incidents.length, 0);
+      assert.equal(state.alerts.length, 0);
     } finally {
       site.respondWith(200);
     }

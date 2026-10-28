@@ -197,9 +197,9 @@ Your job is to help a website owner understand this incident:
 - RECOMMENDATION: a concrete troubleshooting step the owner can take.
 
 Strict rules -- read the "monitoring" object carefully:
-- "failureReasonRecorded" is false: Sentinel did NOT record why a check failed (timeout vs DNS vs connection refused vs TLS). Never claim to know the root cause. "timeoutFailures" vs "fastFailures" is only a timing clue, not a diagnosis.
+- "failureReasonRecorded" is false: for failed checks WITHOUT a status code, Sentinel did NOT record why the check failed (timeout vs DNS vs connection refused vs TLS). Never claim to know the root cause. "timeoutFailures" vs "fastFailures" is only a timing clue, not a diagnosis.
 - "vantagePoints" is 1: checks come from a single location, so you cannot distinguish the site being down from a network-path problem between the monitor and the site.
-- "httpErrorsCountAsUp" is true: any HTTP response, including 5xx server errors, counts as up. The absence of HTTP errors in the data is NOT evidence that the server was healthy.
+- "serverErrorsCountAsDown" is true: a 5xx response counts as a failed check, and "serverErrorFailures" counts them. A failed check WITH a status code means the server answered with that error; you still do not know what caused the error inside the server. 4xx responses count as up and are not part of any incident.
 - You have no server logs, hosting data, or traffic data. Never claim to know server-side causes.
 - An OPEN incident is ongoing; do not describe it as resolved.
 - Every finding's "evidence" must only restate facts present in the input.

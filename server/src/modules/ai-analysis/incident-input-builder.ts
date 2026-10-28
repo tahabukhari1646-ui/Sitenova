@@ -28,6 +28,7 @@ export interface IncidentAiFacts {
   windowStats: {
     total: number;
     failed: number;
+    server_errors: number;
     timeouts: number;
     fast: number;
     min_rt: number | null;
@@ -61,7 +62,8 @@ function toAiCheck(check: RawCheck): IncidentAiCheck {
     success: check.success,
     statusCode: check.statusCode,
     responseTimeMs,
-    hitTimeoutCeiling: !check.success && responseTimeMs !== null && responseTimeMs >= TIMEOUT_CEILING_MS,
+    hitTimeoutCeiling:
+      !check.success && check.statusCode === null && responseTimeMs !== null && responseTimeMs >= TIMEOUT_CEILING_MS,
   };
 }
 
@@ -94,11 +96,12 @@ export function buildIncidentAiInput(facts: IncidentAiFacts): IncidentAiInput {
       degradedThresholdMs: DEGRADED_RESPONSE_TIME_MS,
       vantagePoints: 1,
       failureReasonRecorded: false,
-      httpErrorsCountAsUp: true,
+      serverErrorsCountAsDown: true,
     },
     window: {
       totalChecks: w.total,
       failedChecks: w.failed,
+      serverErrorFailures: w.server_errors,
       timeoutFailures: w.timeouts,
       fastFailures: w.fast,
       failedResponseTimeMs:

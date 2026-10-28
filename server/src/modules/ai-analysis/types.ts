@@ -195,8 +195,8 @@ export interface SeoAiInput {
 // full. No website URL or name is included -- the AI does not need it.
 //
 // The monitoring facts are passed explicitly so the AI knows what it CANNOT
-// know: failure reasons are not recorded, checks run from one location, and
-// any HTTP response (even 5xx) counts as "up".
+// know: failure reasons are not recorded, checks run from one location.
+// Stage 20.2: 5xx answers count as "down"; 4xx answers still count as "up".
 
 export interface IncidentAiCheck {
   checkedAt: string;
@@ -204,8 +204,9 @@ export interface IncidentAiCheck {
   statusCode: number | null;
   // null when the stored value was negative (a wall-clock jump) -- unknown.
   responseTimeMs: number | null;
-  // true when a FAILED check took at least the timeout ceiling (did not
-  // respond in time); false for successes and fast failures.
+  // true when a FAILED check got no answer and took at least the timeout
+  // ceiling (did not respond in time); false for successes, fast failures
+  // and server errors.
   hitTimeoutCeiling: boolean;
 }
 
@@ -233,11 +234,14 @@ export interface IncidentAiInput {
     degradedThresholdMs: number;
     vantagePoints: number;
     failureReasonRecorded: false;
-    httpErrorsCountAsUp: true;
+    serverErrorsCountAsDown: true;
   };
   window: {
     totalChecks: number;
     failedChecks: number;
+    // Failed checks where the server answered with a 5xx status code.
+    serverErrorFailures: number;
+    // Failed checks with no answer, split by the timeout ceiling.
     timeoutFailures: number;
     fastFailures: number;
     failedResponseTimeMs: { min: number; median: number; max: number } | null;

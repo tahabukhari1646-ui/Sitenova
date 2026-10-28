@@ -31,6 +31,7 @@ describe("Uptime incident AI", () => {
   let longWebsiteId: string;
   let resolved: Incident;
   let open: Incident;
+  let serverErrors: Incident;
   let startedAt: Date;
   let resolvedAt: Date;
 
@@ -68,6 +69,22 @@ describe("Uptime incident AI", () => {
       data: Array.from({ length: 2000 }, (_, i) => ({ websiteId: longWebsiteId, success: false, statusCode: null, responseTimeMs: 100, checkedAt: new Date(openStart.getTime() + i * 30_000) })),
     });
     open = await prisma.incident.create({ data: { websiteId: longWebsiteId, status: "OPEN", startedAt: openStart } });
+
+    // Stage 20.2: a 4-minute incident of 3 server errors + 1 timeout.
+    const errorSiteId = (await createWebsite(owner.id, { url: SITE_URL })).id;
+    const errorStart = new Date(Date.now() - 2 * DAY);
+    await prisma.monitoringCheck.createMany({
+      data: [503, 500, 502, null].map((statusCode, i) => ({
+        websiteId: errorSiteId,
+        success: false,
+        statusCode,
+        responseTimeMs: statusCode === null ? 10010 : 200,
+        checkedAt: new Date(errorStart.getTime() + i * MINUTE),
+      })),
+    });
+    serverErrors = await prisma.incident.create({
+      data: { websiteId: errorSiteId, status: "RESOLVED", startedAt: errorStart, resolvedAt: new Date(errorStart.getTime() + 4 * MINUTE) },
+    });
   });
   after(async () => {
     await api.close();
@@ -84,6 +101,7 @@ describe("Uptime incident AI", () => {
       assert.equal(input.window.failedChecks, 31);
       assert.equal(input.window.timeoutFailures, 10);
       assert.equal(input.window.fastFailures, 20);
+      assert.equal(input.window.serverErrorFailures, 0);
       assert.deepEqual(input.window.failedResponseTimeMs, { min: 50, median: 50, max: 10010 });
     });
 
@@ -112,13 +130,22 @@ describe("Uptime incident AI", () => {
       assert.equal(monitoring.requestTimeoutMs, 10000);
       assert.equal(monitoring.timeoutCeilingMs, 9500);
       assert.equal(monitoring.failureReasonRecorded, false);
-      assert.equal(monitoring.httpErrorsCountAsUp, true);
+      assert.equal(monitoring.serverErrorsCountAsDown, true);
       assert.equal(monitoring.vantagePoints, 1);
     });
 
     it("never includes the site URL, name or id", async () => {
       const json = JSON.stringify(await loadIncidentAiInput(resolved));
       for (const secret of ["secret-site-name", "SecretSiteName", websiteId]) assert.ok(!json.includes(secret), secret);
+    });
+
+    it("counts server errors separately from failures with no answer", async () => {
+      const input = await loadIncidentAiInput(serverErrors);
+      assert.equal(input.window.failedChecks, 4);
+      assert.equal(input.window.serverErrorFailures, 3);
+      assert.equal(input.window.timeoutFailures, 1);
+      assert.equal(input.window.fastFailures, 0, "a quick 5xx is not a 'fast failure'");
+      assert.deepEqual(input.sampleChecks.map((c) => [c.statusCode, c.hitTimeoutCeiling]), [[503, false], [500, false], [502, false], [null, true]]);
     });
 
     it("handles a long open incident with a bounded sample", async () => {
@@ -157,6 +184,13 @@ describe("Uptime incident AI", () => {
       const output = await new MockAiProvider().analyzeIncident(await loadIncidentAiInput(open));
       assert.equal(output.priority, "CRITICAL");
       assert.match(output.findings[0].title, /currently unreachable/);
+    });
+
+    it("describes mostly-5xx incidents as server errors, not unreachable", async () => {
+      const output = await new MockAiProvider().analyzeIncident(await loadIncidentAiInput(serverErrors));
+      assert.equal(validateDiagnosisAiOutput(output).valid, true);
+      assert.equal(output.findings[0].title, "Website returned server errors");
+      assert.ok(output.findings[0].evidence.includes("3 failure(s) were HTTP 5xx server error responses."));
     });
   });
 

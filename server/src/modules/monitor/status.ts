@@ -6,6 +6,13 @@ export type MonitoringStatus = "UNKNOWN" | "UP" | "DEGRADED" | "DOWN";
 export const FAILURE_CONFIRMATION_THRESHOLD = 2;
 export const DEGRADED_RESPONSE_TIME_MS = 3000;
 
+// Stage 20.2: which HTTP answers count as "up". 5xx means the server itself
+// is failing, so it counts as down. 4xx stays up: the server is answering
+// (404, login-protected 401/403, rate-limited 429 are not outages).
+export function isUpStatusCode(statusCode: number): boolean {
+  return statusCode < 500;
+}
+
 export interface LatestCheckForStatus {
   success: boolean;
   responseTimeMs: number;

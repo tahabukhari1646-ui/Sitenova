@@ -39,8 +39,8 @@ The test database can be deleted at any time; the next run recreates it.
 | `unit/` | AI output validators, SEO AI input (no scraped text), fingerprints, mock provider, OpenAI schemas, cost-control settings, uptime status/incident/alert rules, email content and provider selection, request validation |
 | `api/` | Real HTTP requests: auth, Performance / SEO / Uptime AI routes, cost controls, automatic AI, ownership matrix, uptime monitoring cycle, email delivery, notifications, settings, websites |
 | `helpers/` | Fake-data factories, test server, local fake website (`fake-website.ts`), mock-call counter, `withEnv` |
-
-Uptime tests check a fake website on `127.0.0.1` instead of a real one. One test is
-labelled **CURRENT BEHAVIOUR**: a 500 response currently counts as UP. If that rule is
-changed on purpose, update that test as part of the same change.
 | `setup/` | Safety lock, environment preload, test database rebuild |
+
+Uptime tests check a fake website on `127.0.0.1` instead of a real one. The uptime
+rule (Stage 20.2): 5xx answers count as DOWN, 2xx-4xx count as UP, no answer counts
+as DOWN.
