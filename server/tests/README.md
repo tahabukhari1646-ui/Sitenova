@@ -20,6 +20,14 @@ npm --prefix server run typecheck   # TypeScript check of app + tests
 - **No internet.** Any request to a non-local host fails and is counted; every test
   file asserts the count is 0.
 - **No schedulers.** Tests import `src/app.ts`, never `src/server.ts`.
+- **No real DNS.** `dns.lookup` is replaced: names registered with `setTestDnsRecord()`
+  resolve to the given addresses, `localhost`/literal IPs work, everything else is
+  "not found".
+- **Loopback exception (tests only).** `safeFetch` normally refuses every internal
+  address (SSRF protection). The preload sets `SAFE_FETCH_ALLOW_LOOPBACK_FOR_TESTS=true`
+  so the local fake website on `127.0.0.1` can be checked. It only works together
+  with `NODE_ENV=test` and never opens private networks or `169.254.169.254`.
+  `ssrf-protection.test.ts` turns it off to prove the real rules.
 
 `TEST_DATABASE_NAME` can override the name (it must still end in `_test`).
 The test database can be deleted at any time; the next run recreates it.

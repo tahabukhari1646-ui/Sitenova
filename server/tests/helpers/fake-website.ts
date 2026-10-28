@@ -9,6 +9,8 @@ export interface FakeWebsite {
   url: string;
   // HTTP status the site answers with (default 200).
   respondWith(statusCode: number): void;
+  // Answer with a 302 redirect to `location` (null = stop redirecting).
+  redirectTo(location: string | null): void;
   requestCount(): number;
   close(): Promise<void>;
 }
@@ -16,8 +18,14 @@ export interface FakeWebsite {
 export async function startFakeWebsite(): Promise<FakeWebsite> {
   let statusCode = 200;
   let requests = 0;
+  let redirectLocation: string | null = null;
   const server = http.createServer((_req, res) => {
     requests++;
+    if (redirectLocation) {
+      res.writeHead(302, { Location: redirectLocation });
+      res.end();
+      return;
+    }
     res.writeHead(statusCode, { "Content-Type": "text/html" });
     res.end("<html><body>fake site</body></html>");
   });
@@ -28,6 +36,9 @@ export async function startFakeWebsite(): Promise<FakeWebsite> {
     url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/`,
     respondWith: (code) => {
       statusCode = code;
+    },
+    redirectTo: (location) => {
+      redirectLocation = location;
     },
     requestCount: () => requests,
     close: () => new Promise((resolve) => server.close(() => resolve())),

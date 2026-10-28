@@ -57,6 +57,12 @@ export interface SafeFetchOptions {
    */
   allowedContentTypes?: string[];
   userAgent?: string;
+  /**
+   * Stage 20.1: stop as soon as the final response's status and headers
+   * arrive -- the body is never downloaded and `body` is "". For uptime
+   * checks, which only need the status code and response time.
+   */
+  discardBody?: boolean;
 }
 
 export interface SafeFetchResult {
@@ -117,6 +123,25 @@ function bareHostname(url: URL): string {
   return hostname;
 }
 
+// Stage 20.1: the automated test suite checks a fake website on this
+// computer, which the rules below would (correctly) block. This is the one
+// narrow exception: loopback ONLY (127.0.0.0/8 and ::1 -- never private
+// networks or the 169.254.169.254 metadata address), and only when BOTH
+// NODE_ENV=test and SAFE_FETCH_ALLOW_LOOPBACK_FOR_TESTS=true are set, which
+// only tests/setup/preload.ts does. Read at call time so a test can turn it
+// off to prove loopback is blocked.
+function isLoopbackAllowedForTests(address: string, family: 4 | 6): boolean {
+  if (process.env.NODE_ENV !== "test" || process.env.SAFE_FETCH_ALLOW_LOOPBACK_FOR_TESTS !== "true") {
+    return false;
+  }
+  return family === 4 ? address.startsWith("127.") : address === "::1";
+}
+
+// Every block decision in this file goes through here.
+export function isDestinationBlocked(address: string, family: 4 | 6): boolean {
+  return isBlockedAddress(address, family) && !isLoopbackAllowedForTests(address, family);
+}
+
 // If the URL's host is itself a literal IP address, it can be validated
 // immediately with no DNS involved at all — nothing to resolve, nothing to
 // rebind. Returns the family if it's a literal IP, or null if it's a name
@@ -125,7 +150,7 @@ function rejectIfBlockedLiteralIp(hostname: string): void {
   const family = net.isIP(hostname);
   if (family === 0) return; // not a literal IP — handled at connect time
 
-  if (isBlockedAddress(hostname, family as 4 | 6)) {
+  if (isDestinationBlocked(hostname, family as 4 | 6)) {
     throw new SafeFetchError(
       "BLOCKED_DESTINATION",
       "This destination is not allowed."
@@ -179,7 +204,7 @@ function safeLookup(
     // hostname is treated as blocked, rather than picking a "safe" one from
     // a mixed set — a hostname that resolves to both a public and a private
     // address is itself a red flag worth rejecting outright.
-    const blocked = addresses.some((a) => isBlockedAddress(a.address, a.family as 4 | 6));
+    const blocked = addresses.some((a) => isDestinationBlocked(a.address, a.family as 4 | 6));
     if (blocked) {
       cb(Object.assign(new Error("Resolved address is blocked."), { code: "EBLOCKEDDESTINATION" }));
       return;
@@ -423,6 +448,19 @@ export async function safeFetch(
     }
 
     const contentType = (hopResult.headers["content-type"] as string | undefined) ?? null;
+
+    if (options.discardBody) {
+      hopResult.stream.destroy(); // status + headers are all the caller needs
+      return {
+        requestedUrl,
+        finalUrl: currentUrl.toString(),
+        statusCode: hopResult.statusCode,
+        headers: flattenHeaders(hopResult.headers),
+        contentType,
+        body: "",
+      };
+    }
+
     const body = await readBodyWithLimit(
       hopResult.stream,
       maxBodyBytes,

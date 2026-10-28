@@ -3,10 +3,20 @@ import { websiteRepository } from "../website/repository";
 import { AlertFilters, CheckResult, HistoryRange, IncidentStatus } from "./types";
 import { NotFoundError } from "../../errors/AppError";
 import { deriveMonitoringStatus } from "./status";
+import { safeFetch, SafeFetchError, type SafeFetchErrorCode } from "../../utils/safeFetch";
 
 // Stage 18.5: exported (value unchanged) so the uptime AI input reports the
 // exact timeout the checks actually use, rather than a copy that could drift.
 export const REQUEST_TIMEOUT_MS = 10_000;
+
+// safeFetch refusals that mean "this address must never be contacted",
+// as opposed to an ordinary outage (timeout, DNS failure, network error).
+const REFUSED_DESTINATION_CODES = new Set<SafeFetchErrorCode>([
+  "BLOCKED_DESTINATION",
+  "INVALID_URL",
+  "UNSUPPORTED_PROTOCOL",
+  "CREDENTIALS_NOT_ALLOWED",
+]);
 
 const RANGE_MS: Record<HistoryRange, number> = {
   "24h": 24 * 60 * 60 * 1000,
@@ -28,19 +38,29 @@ export const monitorService = {
   getActiveWebsites: () => {
     return monitorRepository.findActiveWebsites();
   },
+  // Stage 20.1: goes through safeFetch (SSRF protection) instead of a raw
+  // fetch() -- private/internal destinations, non-http(s) URLs and URLs with
+  // credentials are refused before any connection, every redirect is
+  // re-checked, and the resolved address is validated at connect time.
+  // Headers only (discardBody); "any HTTP answer counts as up" is unchanged.
   checkWebsite: async (websiteId: string, url: string): Promise<CheckResult> => {
     const startedAt = Date.now();
 
     try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      const response = await safeFetch(url, { timeoutMs: REQUEST_TIMEOUT_MS, discardBody: true });
 
       return {
         websiteId,
         success: true,
-        statusCode: response.status,
+        statusCode: response.statusCode,
         responseTimeMs: Date.now() - startedAt,
       };
-    } catch {
+    } catch (error) {
+      if (error instanceof SafeFetchError && REFUSED_DESTINATION_CODES.has(error.code)) {
+        // Recorded as a failed check like any unreachable site, but logged
+        // so a refused address is visible. Code only -- never the URL.
+        console.warn(`Uptime check refused for website ${websiteId}: ${error.code}`);
+      }
       return {
         websiteId,
         success: false,

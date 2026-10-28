@@ -11,6 +11,17 @@ export function assertNoExternalRequests(): void {
   assert.deepEqual(blockedExternalRequests(), [], "a test tried to reach the internet");
 }
 
+// --- Fake DNS (installed by setup/preload.ts) ---
+// Makes `hostname` resolve to `addresses` for the rest of this test file.
+export function setTestDnsRecord(hostname: string, addresses: string[]): void {
+  const records = (globalThis as typeof globalThis & { __testDnsRecords?: Map<string, { address: string; family: number }[]> })
+    .__testDnsRecords!;
+  records.set(
+    hostname.toLowerCase(),
+    addresses.map((address) => ({ address, family: address.includes(":") ? 6 : 4 }))
+  );
+}
+
 // --- Mock AI call counter ---
 // Counts every time the (free) mock provider is asked for an analysis, so
 // tests can prove when a "paid" call would or would not have happened.
