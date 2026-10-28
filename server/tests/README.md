@@ -1,0 +1,34 @@
+# Backend tests
+
+Run from the project root:
+
+```bash
+npm --prefix server test        # full suite (rebuilds the test database first)
+npm --prefix server run test:unit   # fast checks only, no database
+npm --prefix server run typecheck   # TypeScript check of app + tests
+```
+
+## Safety
+
+- **Separate database.** Tests use `sitenova_test` on the same Postgres server as
+  `server/.env`. It is dropped and rebuilt from `prisma/migrations` at the start of
+  every `npm test`. Real data is never read or written.
+- **Safety lock.** The run stops unless the database name ends in `_test` and differs
+  from the development database (`tests/setup/test-database.ts`).
+- **No cost, no email.** AI and email are forced to `mock`; OpenAI, Resend and
+  PageSpeed keys are removed for the run (`tests/setup/preload.ts`).
+- **No internet.** Any request to a non-local host fails and is counted; every test
+  file asserts the count is 0.
+- **No schedulers.** Tests import `src/app.ts`, never `src/server.ts`.
+
+`TEST_DATABASE_NAME` can override the name (it must still end in `_test`).
+The test database can be deleted at any time; the next run recreates it.
+
+## Layout
+
+| Folder | What it covers |
+|---|---|
+| `unit/` | AI output validators, SEO AI input (no scraped text), fingerprints, mock provider, OpenAI schemas, cost-control settings |
+| `api/` | Real HTTP requests: auth, Performance / SEO / Uptime AI routes, cost controls, automatic AI, ownership matrix |
+| `helpers/` | Fake-data factories, test server, mock-call counter, `withEnv` |
+| `setup/` | Safety lock, environment preload, test database rebuild |

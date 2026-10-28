@@ -4,7 +4,11 @@
   "description": "Express + TypeScript backend for Sentinel AI, an AI-powered website health monitoring platform.",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "tsx watch src/server.ts"
+    "dev": "tsx watch src/server.ts",
+    "test": "npm run test:db:reset && node --import tsx --import ./tests/setup/preload.ts --test --test-concurrency=1 \"tests/**/*.test.ts\"",
+    "test:db:reset": "tsx tests/setup/reset-test-database.ts",
+    "test:unit": "node --import tsx --import ./tests/setup/preload.ts --test \"tests/unit/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit && tsc -p tests/tsconfig.json"
   },
   "keywords": [],
   "author": "",
