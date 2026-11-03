@@ -36,11 +36,15 @@ The test database can be deleted at any time; the next run recreates it.
 
 | Folder | What it covers |
 |---|---|
-| `unit/` | AI output validators, SEO AI input (no scraped text), fingerprints, mock provider, OpenAI schemas, cost-control settings, uptime status/incident/alert rules, email content and provider selection, request validation |
-| `api/` | Real HTTP requests: auth, Performance / SEO / Uptime AI routes, cost controls, automatic AI, ownership matrix, uptime monitoring cycle, email delivery, notifications, settings, websites |
-| `helpers/` | Fake-data factories, test server, local fake website (`fake-website.ts`), mock-call counter, `withEnv` |
+| `unit/` | AI output validators, SEO AI input (no scraped text), fingerprints, mock provider, OpenAI schemas, cost-control settings, uptime status/incident/alert rules, email content and provider selection, request validation, SEO parser/issue/change/alert rules, performance ratings/alert rules, blocked addresses |
+| `api/` | Real HTTP requests: auth, Performance / SEO / Uptime AI routes, cost controls, automatic AI, ownership matrix, uptime monitoring cycle, email delivery, notifications, settings, websites, SSRF protection, SEO scans, performance checks |
+| `helpers/` | Fake-data factories, test server, local fake website (`fake-website.ts`), fake Google PageSpeed (`fake-pagespeed.ts`), mock-call counter, `withEnv`, `setTestDnsRecord` |
 | `setup/` | Safety lock, environment preload, test database rebuild |
 
 Uptime tests check a fake website on `127.0.0.1` instead of a real one. The uptime
 rule (Stage 20.2): 5xx answers count as DOWN, 2xx-4xx count as UP, no answer counts
 as DOWN.
+
+SEO tests scan the fake website through a test-only name (`setTestDnsRecord`), because
+typed-in page URLs on `127.0.0.1` are refused. Performance tests never reach Google:
+`installFakePageSpeed()` answers PageSpeed requests locally with a fake key.
