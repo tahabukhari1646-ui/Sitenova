@@ -2,6 +2,8 @@
 
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { alertKeys } from "@/features/alerts/hooks";
+import { notificationKeys } from "@/features/notifications/hooks";
 import { ApiError } from "@/lib/api-client";
 import type { IncidentStatus, MonitoringCheck } from "@/types";
 import {
@@ -10,6 +12,7 @@ import {
   getLatestCheck,
   getLatestIncidentAiAnalysis,
   runIncidentAiAnalysis,
+  runUptimeCheck,
 } from "./api";
 import type { HistoryRange, IncidentAiAnalysis } from "./types";
 
@@ -124,6 +127,33 @@ export function useIncidents(id: string, status?: IncidentStatus) {
           ? "Failed to load incidents."
           : null,
     refetch: query.refetch,
+  };
+}
+
+// Manual "Check uptime now". The backend saves it through the same
+// transaction as the scheduler's checks, so besides status and history it can
+// open/resolve an incident and create an alert + notification -- every one of
+// those caches is refreshed. Prefix keys: all history ranges, all incident
+// filters and all alert filters at once. If nothing changed, these are
+// harmless no-op refetches.
+export function useRunUptimeCheck(websiteId: string) {
+  const queryClient = useQueryClient();
+
+  const mutation = useMutation({
+    mutationFn: () => runUptimeCheck(websiteId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["websites", websiteId, "status"] });
+      queryClient.invalidateQueries({ queryKey: ["websites", websiteId, "checks"] });
+      queryClient.invalidateQueries({ queryKey: ["websites", websiteId, "incidents"] });
+      queryClient.invalidateQueries({ queryKey: alertKeys.all(websiteId) });
+      queryClient.invalidateQueries({ queryKey: notificationKeys.all });
+    },
+  });
+
+  return {
+    runCheck: () => mutation.mutate(),
+    isRunning: mutation.isPending,
+    error: toAiErrorMessage(mutation.error, "Unable to complete uptime check."),
   };
 }
 

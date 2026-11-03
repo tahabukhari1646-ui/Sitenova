@@ -19,7 +19,11 @@ import { ResponseTimeChart } from "@/features/monitoring/components/ResponseTime
 import { TimeRangeSelector } from "@/features/monitoring/components/TimeRangeSelector";
 import { UptimeHistoryTimeline } from "@/features/monitoring/components/UptimeHistoryTimeline";
 import { UptimeStats, UptimeStatsSkeleton } from "@/features/monitoring/components/UptimeStats";
-import { useWebsiteHistory, useWebsiteStatus } from "@/features/monitoring/hooks";
+import {
+  useRunUptimeCheck,
+  useWebsiteHistory,
+  useWebsiteStatus,
+} from "@/features/monitoring/hooks";
 import { PerformanceSection } from "@/features/performance/components/PerformanceSection";
 import { SeoSection } from "@/features/seo/components/SeoSection";
 import type { HistoryRange } from "@/features/monitoring/types";
@@ -53,6 +57,8 @@ export function WebsiteDetailView({ id }: WebsiteDetailViewProps) {
     error: historyError,
     refetch: refetchHistory,
   } = useWebsiteHistory(id, range);
+  // Declared with the other hooks, before the loading/error early returns.
+  const uptimeCheck = useRunUptimeCheck(id);
 
   // Stage P2: ONE shared selected-page URL, owned here and passed to both
   // PerformanceSection and SeoSection, so "which page" is answered
@@ -121,9 +127,38 @@ export function WebsiteDetailView({ id }: WebsiteDetailViewProps) {
       }
     >
       <section className="flex flex-col gap-4">
-        <h2 className="text-lg font-semibold tracking-tight">
-          Uptime Monitoring
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold tracking-tight">
+            Uptime Monitoring
+          </h2>
+          {/* Paused sites are skipped by the scheduler; the manual check is
+              disabled here too so it can't open incidents or send alerts for
+              a site the user deliberately paused. Frontend-only guard. */}
+          <Button
+            type="button"
+            onClick={() => uptimeCheck.runCheck()}
+            disabled={!website.isActive || uptimeCheck.isRunning}
+          >
+            {!website.isActive
+              ? "Monitoring is paused"
+              : uptimeCheck.isRunning
+                ? "Checking..."
+                : "Check uptime now"}
+          </Button>
+        </div>
+
+        {uptimeCheck.isRunning && (
+          <p className="text-xs text-muted-foreground">
+            This can take a few seconds — Sentinel AI is contacting the
+            website.
+          </p>
+        )}
+
+        {uptimeCheck.error && (
+          <p role="alert" className="text-sm text-destructive">
+            {uptimeCheck.error}
+          </p>
+        )}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <StatCard

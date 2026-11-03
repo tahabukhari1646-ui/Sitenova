@@ -5,6 +5,12 @@ export interface LatestCheckResult {
   check: MonitoringCheck | null;
 }
 
+// POST /websites/:id/check -- one on-demand uptime check, saved through the
+// same path as the scheduler's. Always a saved row (201), never null.
+export interface ManualCheckResult {
+  check: MonitoringCheck;
+}
+
 export type HistoryRange = "24h" | "7d" | "30d";
 
 export interface HistoryStats {

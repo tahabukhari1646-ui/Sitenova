@@ -7,6 +7,7 @@ import type {
   IncidentLatestAiAnalysisResult,
   IncidentsResult,
   LatestCheckResult,
+  ManualCheckResult,
 } from "./types";
 
 export function getLatestCheck(websiteId: string): Promise<LatestCheckResult> {
@@ -26,6 +27,15 @@ export function getIncidents(
 ): Promise<IncidentsResult> {
   const query = status ? `?status=${status}` : "";
   return apiFetch<IncidentsResult>(`/websites/${websiteId}/incidents${query}`);
+}
+
+// One uptime check right now -- no request body. Saved through the same path
+// as the scheduler's, so it can also open/resolve an incident and create the
+// matching alert, notification and email.
+export function runUptimeCheck(websiteId: string): Promise<ManualCheckResult> {
+  return apiFetch<ManualCheckResult>(`/websites/${websiteId}/check`, {
+    method: "POST",
+  });
 }
 
 // Stage 18.6: manual AI diagnosis of one stored incident -- no request body;
